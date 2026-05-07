@@ -7,11 +7,23 @@ GEMINI.md
 printouts
 
 # Personal Headline feature files
+aggregator/public_app.py
+aggregator/templates/public_*.html
 aggregator/templates/headlines.html
+aggregator/templates/public_article.html
+aggregator/templates/public_story.html
+aggregator/templates/archive.html
+aggregator/templates/about.html
+aggregator/templates/404.html
+aggregator/templates/500.html
 aggregator/blueprints/personal.py
 news_fetcher/headline_ranker.py
 news_fetcher/editorial_ranker.py
+private_site/
+site_output/
+docker-compose.private.yml
 
 # Production / Setup scripts
 boot.sh
-create_admin.py
+.aider*
+TODO.md

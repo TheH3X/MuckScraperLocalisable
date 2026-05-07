@@ -5,10 +5,13 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from aggregator import create_app, db
 from aggregator.models import AppSetting
-from news_fetcher.fetch_and_store_articles import fetch_and_store_articles, ollama_catchup
+from news_fetcher.fetch_and_store_articles import fetch_and_store_articles, process_current_edition, sync_allsides_ratings, publish_edition, retry_unrated_outlets
+from news_fetcher.rss_fetcher import fetch_and_store_rss
 from datetime import datetime, timedelta
 import logging
 import sys
+import os
+import requests
 
 logging.basicConfig(
     stream=sys.stdout,
@@ -16,8 +19,8 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
-# New schedule times in Eastern Time: 12am, 7am, 12pm, 6pm
-SCHEDULE_HOURS = "0,7,12,18"
+# New schedule times in Eastern Time: 7am, 12pm, 5pm, 10pm
+SCHEDULE_HOURS = "7,12,17,22"
 TIMEZONE = "America/New_York"
 
 SCHEDULED_FETCHES = [
@@ -47,32 +50,67 @@ SCHEDULED_FETCHES = [
         "mode":           "query",
         "country":        None,
         "category":       None,
-        "query":          "science health medicine research climate environment",
-        "gnews_query":    "science health medicine",
-        "gnews_category": "health",
+        "query":          "scientific breakthroughs medical research healthcare tech",
+        "gnews_query":    "science health research",
+        "gnews_category": "science",
     },
-    # === TECHNOLOGY — kept but scoped to real news, not dev releases ===
+    # === SPORTS ===
     {
-        "label":          "Technology",
+        "label":          "Sports",
         "mode":           "top",
         "country":        "us",
-        "category":       "technology",
+        "category":       "sports",
         "query":          None,
         "gnews_query":    None,
-        "gnews_category": "technology",
+        "gnews_category": "sports",
     },
-    # === NATIONAL SECURITY / FOREIGN POLICY ===
+    # === WORLD NEWS ===
     {
-        "label":          "National Security & Foreign Policy",
+        "label":          "World News",
         "mode":           "query",
         "country":        None,
         "category":       None,
-        "query":          "military NATO foreign policy diplomacy war conflict sanctions",
-        "gnews_query":    "military NATO diplomacy conflict",
-        "gnews_category": None,
+        "query":          "international world global news conflicts diplomacy",
+        "gnews_query":    "world global news",
+        "gnews_category": "world",
     },
 ]
+
 app = create_app()
+
+
+def run_optional_headline_ranking():
+    """
+    Run the private ranking plugin when it exists locally.
+    The open-source scheduler must not require ignored/private modules.
+    """
+    try:
+        from news_fetcher.headline_ranker import run_headline_ranking
+    except ImportError as e:
+        logging.info(f"--- Headline ranking skipped ({e}) ---")
+        return
+
+    run_headline_ranking()
+
+
+def run_optional_static_export():
+    """
+    Export the private static site when the ignored private exporter exists.
+    This lets muckscraper.news publish after edition processing without making
+    the open-source stack depend on private templates or routes.
+    """
+    try:
+        from private_site.export_static import export_static_site
+    except ImportError as e:
+        logging.warning(
+            "--- Static site export skipped (%s). If the public site is enabled, "
+            "make sure docker-compose.private.yml is loaded and mounts "
+            "./private_site and ./site_output into the scheduler container. ---",
+            e,
+        )
+        return
+
+    export_static_site()
 
 
 def get_last_fetch_time():
@@ -97,6 +135,28 @@ def set_last_fetch_time():
     db.session.commit()
 
 
+def get_last_allsides_sync():
+    """Get the last AllSides sync timestamp from the database."""
+    setting = AppSetting.query.filter_by(key="last_allsides_sync").first()
+    if setting and setting.value:
+        try:
+            return datetime.fromisoformat(setting.value)
+        except Exception:
+            return None
+    return None
+
+
+def set_last_allsides_sync():
+    """Store the current time as the last AllSides sync timestamp."""
+    setting = AppSetting.query.filter_by(key="last_allsides_sync").first()
+    if setting:
+        setting.value = datetime.utcnow().isoformat()
+    else:
+        setting = AppSetting(key="last_allsides_sync", value=datetime.utcnow().isoformat())
+        db.session.add(setting)
+    db.session.commit()
+
+
 def should_fetch_now():
     """
     Returns True if it's been more than 1 hour since the last fetch,
@@ -104,8 +164,8 @@ def should_fetch_now():
     to fetch on startup if it was offline during a scheduled window.
     """
     last_fetch = get_last_fetch_time()
-    if last_fetch is None:
-        logging.info("No previous fetch found, fetching now.")
+    if not last_fetch:
+        logging.info("No record of previous fetch. Initializing...")
         return True
 
     elapsed = datetime.utcnow() - last_fetch
@@ -122,47 +182,93 @@ def should_fetch_now():
         return False
 
 
-# Track Ollama state between runs
-ollama_was_online = False
+def _notify_n8n():
+    webhook = os.getenv("N8N_WEBHOOK_URL")
+    if not webhook:
+        return
+    try:
+        requests.post(webhook, timeout=5)
+        logging.info("  [n8n] Webhook fired — Ollama suspend sequence triggered")
+    except Exception as e:
+        logging.warning(f"  [n8n] Webhook failed ({e}) — continuing normally")
 
 
 def run_all_fetches():
-    global ollama_was_online
-
     logging.info("=== Starting scheduled fetch run ===")
     with app.app_context():
-        # Check if Ollama just came back online
-        from news_fetcher.summarizer import check_ollama_status
-        ollama_is_online = check_ollama_status()
-
-        if ollama_is_online and not ollama_was_online:
-            logging.info("Ollama just came back online — running catchup...")
-            try:
-                ollama_catchup()
-            except Exception as e:
-                logging.error(f"Ollama catchup error: {e}")
-
-        ollama_was_online = ollama_is_online
-
+        # Fetch all categories
         for fetch in SCHEDULED_FETCHES:
             logging.info(f"--- Fetching: {fetch['label']} ---")
             try:
                 fetch_and_store_articles(
-                    topic_name=fetch["label"],
+                    fetch["label"],
                     mode=fetch["mode"],
-                    query=fetch.get("query"),
-                    country=fetch.get("country"),
-                    category=fetch.get("category"),
-                    gnews_query=fetch.get("gnews_query"),
-                    gnews_category=fetch.get("gnews_category"),
+                    query=fetch["query"],
+                    country=fetch["country"],
+                    category=fetch["category"],
+                    gnews_query=fetch["gnews_query"],
+                    gnews_category=fetch["gnews_category"]
                 )
             except Exception as e:
                 logging.error(f"Error fetching {fetch['label']}: {e}")
 
+        # Run RSS fetch for major wire services and networks
+        logging.info("--- Fetching RSS feeds ---")
+        try:
+            fetch_and_store_rss()
+        except Exception as e:
+            logging.error(f"Error fetching RSS feeds: {e}")
+
+        # Run Bias Checker ONCE after all fetches
+        logging.info("--- Retrying unrated outlets (Bias Checker) ---")
+        try:
+            retry_unrated_outlets()
+        except Exception as e:
+            logging.error(f"Error checking outlet bias: {e}")
+
+        # Run AllSides sync once a month
+        last_sync = get_last_allsides_sync()
+        if last_sync is None or (datetime.utcnow() - last_sync).days >= 30:
+            logging.info("--- Syncing AllSides bias ratings ---")
+            try:
+                sync_allsides_ratings()
+                set_last_allsides_sync()
+            except Exception as e:
+                logging.error(f"Error syncing AllSides ratings: {e}")
+        else:
+            days_since = (datetime.utcnow() - last_sync).days
+            logging.info(f"--- AllSides sync skipped ({days_since}/30 days) ---")
+
+        logging.info("--- Running headline ranking ---")
+        try:
+            run_optional_headline_ranking()
+        except Exception as e:
+            logging.error(f"Error in headline ranking: {e}")
+
+        logging.info("--- Publishing edition ---")
+        try:
+            publish_edition()
+        except Exception as e:
+            logging.error(f"Error publishing edition: {e}")
+
+        logging.info("--- Processing current edition content ---")
+        try:
+            process_current_edition()
+        except Exception as e:
+            logging.error(f"Error processing edition content: {e}")
+
+        logging.info("--- Exporting static site ---")
+        try:
+            run_optional_static_export()
+        except Exception as e:
+            logging.error(f"Error exporting static site: {e}")
+
         set_last_fetch_time()
 
-    logging.info("=== Scheduled fetch run complete ===")
+        # Notify n8n pipeline is done — triggers Ollama machine suspend
+        _notify_n8n()
 
+    logging.info("=== Scheduled fetch run complete ===")
 
 
 if __name__ == "__main__":

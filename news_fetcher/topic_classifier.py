@@ -21,7 +21,6 @@ MODEL       = os.environ.get("OLLAMA_MODEL", "")
 VALID_TOPICS = [
     "US Politics",
     "Science/Technology",
-    "Gaming",
     "Sports",
     "Business/Finance",
     "Other",
@@ -54,7 +53,6 @@ Article: "{text}"
 Categories (choose only from these exact names):
 - US Politics
 - Science/Technology
-- Gaming
 - Sports
 - Business/Finance
 - Other

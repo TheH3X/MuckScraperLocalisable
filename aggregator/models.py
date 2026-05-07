@@ -27,6 +27,9 @@ class Outlet(db.Model):
     url         = db.Column(db.String)
     description = db.Column(db.Text)
     bias_score  = db.Column(db.Float)
+    bias_retry_count = db.Column(db.Integer, default=0, nullable=False, server_default='0')
+    allsides_bias_score = db.Column(db.Float, nullable=True)
+    bias_source = db.Column(db.String(16), nullable=True)
 
     articles = db.relationship("Article", backref="outlet", lazy=True)
 
@@ -54,9 +57,18 @@ class Story(db.Model):
     deep_report = db.Column(db.Text)
     headline_score = db.Column(db.Float, default=0.0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    summary_generated_at = db.Column(db.DateTime, nullable=True)
 
     topics   = db.relationship("Topic",   secondary=story_topics,  back_populates="stories")
     articles = db.relationship("Article", backref="story", lazy=True)
+    edition_stories = db.relationship("EditionStory", back_populates="story", cascade="all, delete-orphan", overlaps="story")
+
+    @property
+    def last_updated(self):
+        """Latest publication date among all articles in this story."""
+        if not self.articles:
+            return self.created_at
+        return max((a.date for a in self.articles if a.date), default=self.created_at)
 
 
 class Article(db.Model):
@@ -82,8 +94,14 @@ class Article(db.Model):
     image_url  = db.Column(db.String)
     embedding  = db.Column(Vector(768))
     summary    = db.Column(db.Text)
+    scrape_audited = db.Column(db.Boolean, default=False, nullable=False, server_default='false')
 
     topics = db.relationship("Topic", secondary=article_topics, back_populates="articles")
+
+    @property
+    def last_updated(self):
+        """The publication date of this article."""
+        return self.date
 
 
 class AppSetting(db.Model):
@@ -147,3 +165,39 @@ class ScrapeBlocklist(db.Model):
     reason       = db.Column(db.String, nullable=False)
     added_at     = db.Column(db.DateTime, default=datetime.utcnow)
     is_permanent = db.Column(db.Boolean, default=False, nullable=False)
+
+
+class Edition(db.Model):
+    __tablename__ = 'editions'
+
+    id           = db.Column(db.Integer, primary_key=True)
+    date         = db.Column(db.Date, nullable=False)
+    edition_type = db.Column(db.String(16), nullable=False)  # night/morning/afternoon/evening
+    created_at   = db.Column(db.DateTime, default=datetime.utcnow)
+    published    = db.Column(db.Boolean, default=True)
+
+    __table_args__ = (db.UniqueConstraint('date', 'edition_type', name='uq_edition_date_type'),)
+
+    edition_stories = db.relationship(
+        'EditionStory',
+        backref='edition',
+        lazy='dynamic',
+        order_by='EditionStory.rank',
+        cascade='all, delete-orphan'
+    )
+
+
+class EditionStory(db.Model):
+    __tablename__ = 'edition_stories'
+    __table_args__ = (
+        db.UniqueConstraint('edition_id', 'story_id',
+                            name='uq_edition_story'),
+    )
+
+    id                      = db.Column(db.Integer, primary_key=True)
+    edition_id              = db.Column(db.Integer, db.ForeignKey('editions.id'), nullable=False)
+    story_id                = db.Column(db.Integer, db.ForeignKey('stories.id'), nullable=False)
+    rank                    = db.Column(db.Integer, nullable=False)
+    headline_score_at_publish = db.Column(db.Float, nullable=True)
+
+    story = db.relationship('Story', back_populates='edition_stories', lazy='joined', overlaps="edition_stories,story_ref")

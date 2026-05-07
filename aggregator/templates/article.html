@@ -2,6 +2,12 @@
 <!DOCTYPE html>
 <html data-theme="light">
 <head>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon_32.png') }}">
+    <link rel="icon" type="image/png" sizes="128x128" href="{{ url_for('static', filename='favicon_128.png') }}">
+    <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='favicon_192.png') }}">
+    <link rel="icon" type="image/png" sizes="512x512" href="{{ url_for('static', filename='favicon_512.png') }}">
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='favicon_180.png') }}">
     <title>{{ article.title }} — MuckScraper</title>
     <style>
         :root {
@@ -91,7 +97,6 @@
             font-size: 14px;
             font-weight: 500;
             color: var(--text-faint);
-        }
             color: var(--text-muted);
         }
 
@@ -117,6 +122,18 @@
         .bias-4 { background-color: #e07b6a; color: white; }
         .bias-5 { background-color: #b51a1a; color: white; }
         .bias-none { background-color: #ddd; color: #666;  }
+
+        .source-badge {
+            font-size: 9px;
+            font-weight: 800;
+            padding: 2px 5px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            vertical-align: middle;
+        }
+        .as-badge { background: #2a7a2a; color: white; }
+        .ai-badge { background: #555; color: white; }
 
         h1 {
             font-size: 36px;
@@ -283,7 +300,11 @@
 
         <div class="article-meta">
             <span class="outlet-name">{{ article.outlet.name }}</span>
-            <span class="article-date">{{ article.date.strftime('%B %d, %Y') }}</span>
+            <span class="article-date local-date" data-utc="{{ article.date.isoformat() }}Z">{{ article.date.strftime('%B %d, %Y') }}</span>
+            {% if article.last_updated and article.last_updated != article.date %}
+                <span style="color:var(--text-faint); font-size:12px;">•</span>
+                <span class="article-date">Updated: <span class="local-date" data-utc="{{ article.last_updated.isoformat() }}Z">{{ article.last_updated.strftime('%B %d, %Y %H:%M') }}</span></span>
+            {% endif %}
 
             {% if article.outlet.bias_score == 1 %}
                 <span class="bias-tag bias-1">Left</span>
@@ -340,7 +361,7 @@
             {% elif not ollama_online %}
                 <p style="font-style: italic; color: var(--text-muted);">Summary will be generated when Ollama is back online. This article has been added to the queue.</p>
             {% else %}
-                <p style="font-style: italic; color: var(--text-muted);">Generating summary...</p>
+                <p style="font-style: italic; color: var(--text-muted);">No summary has been generated yet. Use the summarize action to process this article.</p>
             {% endif %}
         </div>
 
@@ -350,9 +371,18 @@
             {% else %}
                 <div style="padding: 40px; background: var(--bg); border-radius: 16px; text-align: center; border: 1px dashed var(--border);">
                     <p style="color: var(--text-muted); margin-bottom: 16px;">Full scrape unavailable for this article.</p>
-                    <a href="{{ article.url }}" target="_blank" class="btn">View Article at Source ↗</a>
+                    <a href="{{ article.url }}" target="_blank" class="btn">View Article at Source</a>
                 </div>
             {% endif %}
+        </div>
+
+        <div class="article-actions" style="margin-top: 32px; display: flex; gap: 16px;">
+            <form method="POST" action="{{ url_for('admin.summarize_article_route', article_id=article.id) }}">
+                <button type="submit" class="btn">Summarize</button>
+            </form>
+            <form method="POST" action="{{ url_for('admin.rate_article', article_id=article.id) }}">
+                <button type="submit" class="btn" style="background: var(--bg); color: var(--accent); border: 1px solid var(--accent);">Rate Bias</button>
+            </form>
         </div>
 
         <div class="source-link">
@@ -378,6 +408,27 @@
 
     const savedTheme = localStorage.getItem('muckscraper-theme') || 'light';
     applyTheme(savedTheme);
+
+    // ── Local Timezone Conversion ──
+    function convertToLocalTime() {
+        const dateElements = document.querySelectorAll('.local-date');
+        dateElements.forEach(el => {
+            const utcDate = el.getAttribute('data-utc');
+            if (utcDate) {
+                const date = new Date(utcDate);
+                const options = { 
+                    year: 'numeric', 
+                    month: 'short', 
+                    day: '2-digit',
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    hour12: false 
+                };
+                el.textContent = date.toLocaleString(undefined, options).replace(',', '');
+            }
+        });
+    }
+    document.addEventListener('DOMContentLoaded', convertToLocalTime);
 </script>
 
 </body>

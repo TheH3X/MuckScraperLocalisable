@@ -21,7 +21,7 @@ OLLAMA_HOST     = os.environ.get("OLLAMA_HOST", "")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
 
 SIMILARITY_THRESHOLD = 0.92
-LOWER_THRESHOLD = 0.80
+LOWER_THRESHOLD = 0.68
 
 
 @observe()
@@ -68,7 +68,35 @@ def strip_to_snippet(html_content, max_chars=300):
     return text[:max_chars]
 
 
+def strip_video_prefix(title):
+    """
+    Remove common video/media prefixes that distort embeddings.
+    Returns the cleaned title string.
+    """
+    import re
+    prefixes = [
+        r'^WATCH\s*:\s*',
+        r'^\[WATCH\]\s*',
+        r'^WATCH\s*-\s*',
+        r'^VIDEO\s*:\s*',
+        r'^\[VIDEO\]\s*',
+        r'^VIDEO\s*-\s*',
+        r'^LISTEN\s*:\s*',
+        r'^\[LISTEN\]\s*',
+        r'^BREAKING\s*:\s*',
+        r'^LIVE\s*:\s*',
+        r'^LIVE UPDATES?\s*:\s*',
+        r'^UPDATE\s*:\s*',
+        r'^PHOTOS?\s*:\s*',
+        r'^GALLERY\s*:\s*',
+    ]
+    for pattern in prefixes:
+        title = re.sub(pattern, '', title, flags=re.IGNORECASE).strip()
+    return title
+
+
 def find_matching_story(article_title, article_embedding, recent_stories, article_content=None):
+    article_title = strip_video_prefix(article_title)
     if article_embedding is None:
         return None
 
@@ -126,6 +154,7 @@ def find_matching_story(article_title, article_embedding, recent_stories, articl
 
 
 def find_or_create_story(article_title, db, Story, recent_stories, article_embedding=None, article_content=None):
+    article_title = strip_video_prefix(article_title)
     matched_story = find_matching_story(article_title, article_embedding, recent_stories, article_content=article_content)
 
     if matched_story:

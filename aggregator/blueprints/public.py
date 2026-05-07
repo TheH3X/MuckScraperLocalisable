@@ -3,7 +3,6 @@ import requests
 import logging
 from datetime import datetime, timedelta
 from flask import Blueprint, render_template, request, redirect, url_for, jsonify
-from aggregator import db
 from aggregator.models import Article, Story, Topic, RawArticlePayload
 from aggregator.constants import TOPICS, AGGREGATORS
 
@@ -36,34 +35,56 @@ def apply_aggregator_filter(story):
         story.display_articles.sort(key=lambda x: x.date or dt.min, reverse=True)
 
 
+def check_ollama_status():
+    ollama_host = os.environ.get("OLLAMA_HOST", "")
+    if not ollama_host:
+        return False
+    try:
+        response = requests.get(f"{ollama_host}/api/tags", timeout=5)
+        return response.status_code == 200
+    except Exception:
+        return False
+
+
 @public.route("/")
 def index():
     return redirect(url_for("admin.list_articles"))
 
 
+@public.route("/feed-headlines")
+def aggregator_headlines():
+    from aggregator.models import Story, Article
+    from datetime import datetime, timedelta
+    from aggregator.constants import TOPICS
+    cutoff = datetime.utcnow() - timedelta(days=1)
+    stories = Story.query.join(Article).group_by(Story.id).filter(
+        Story.created_at >= cutoff,
+        Story.headline_score > 0
+    ).order_by(Story.headline_score.desc()).limit(20).all()
+    
+    for story in stories:
+        apply_aggregator_filter(story)
+        
+    return render_template(
+        'articles.html',
+        stories=stories,
+        topics=TOPICS,
+        active_label=None,
+        page=1,
+        total_pages=1,
+        show_single=True,
+        is_multi_view=False
+    )
+
+
 @public.route("/story/<int:story_id>")
 def view_story(story_id):
     from sqlalchemy.orm import joinedload
-    from news_fetcher.summarizer import generate_deep_report, summarize_story, check_ollama_status
     story = Story.query.options(
         joinedload(Story.articles).joinedload(Article.outlet)
     ).get_or_404(story_id)
 
     ollama_online = check_ollama_status()
-
-    if not story.summary or story.summary == story.title:
-        if ollama_online:
-            summary = summarize_story(story)
-            if summary:
-                story.summary = summary
-                db.session.commit()
-
-    if len(story.articles) >= 2 and not story.deep_report:
-        if ollama_online:
-            report = generate_deep_report(story)
-            if report:
-                story.deep_report = report
-                db.session.commit()
 
     apply_aggregator_filter(story)
 
@@ -72,25 +93,12 @@ def view_story(story_id):
 
 @public.route("/article/<int:article_id>")
 def view_article(article_id):
-    from news_fetcher.summarizer import summarize_article, check_ollama_status
     article = Article.query.get_or_404(article_id)
     ollama_online = check_ollama_status()
-
-    if not article.summary and ollama_online:
-        summary = summarize_article(article)
-        if summary:
-            article.summary = summary
-            db.session.commit()
 
     return render_template("article.html", article=article, ollama_online=ollama_online)
 
 
 @public.route("/ollama-status")
 def ollama_status():
-    ollama_host = os.environ.get("OLLAMA_HOST", "")
-    try:
-        response = requests.get(f"{ollama_host}/api/tags", timeout=5)
-        online = response.status_code == 200
-    except Exception:
-        online = False
-    return jsonify({"online": online})
+    return jsonify({"online": check_ollama_status()})

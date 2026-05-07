@@ -292,8 +292,7 @@ def force_resummarize():
     return redirect(url_for("admin.list_articles"))
 
 
-@admin.route("/reclassify-articles", methods=["POST"])
-
+@admin.route("/wake-ollama", methods=["POST"])
 @login_required
 def wake_ollama():
     import os
@@ -375,3 +374,32 @@ def unblock_domain():
             db.session.commit()
             logger.info(f"[Blocklist] Removed {domain}")
     return redirect(url_for("admin.scrape_blocklist"))
+
+
+@admin.route("/sync-allsides", methods=["POST"])
+@login_required
+def sync_allsides():
+    label = request.form.get("label", "")
+    try:
+        from news_fetcher.fetch_and_store_articles import sync_allsides_ratings
+        sync_allsides_ratings()
+    except Exception as e:
+        logger.exception(f"AllSides sync error: {e}")
+    return redirect(url_for("admin.list_articles", topic=label) if label else url_for("admin.list_articles"))
+
+
+@admin.route("/merge-outlets", methods=["POST"])
+@login_required
+def merge_outlets():
+    from news_fetcher.fetch_and_store_articles import merge_duplicate_outlets
+    try:
+        summary = merge_duplicate_outlets()
+        return jsonify({
+            'status': 'ok',
+            'renamed': summary['renamed'],
+            'outlets_deleted': summary['outlets_deleted'],
+            'articles_reassigned': summary['articles_reassigned'],
+        })
+    except Exception as e:
+        logger.error(f"Outlet merge failed: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500

@@ -2,6 +2,12 @@
 <!DOCTYPE html>
 <html data-theme="light">
 <head>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon_32.png') }}">
+    <link rel="icon" type="image/png" sizes="128x128" href="{{ url_for('static', filename='favicon_128.png') }}">
+    <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='favicon_192.png') }}">
+    <link rel="icon" type="image/png" sizes="512x512" href="{{ url_for('static', filename='favicon_512.png') }}">
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='favicon_180.png') }}">
     <title>MuckScraper: All the muck that's fit to scrape</title>
     <style>
         :root {
@@ -673,9 +679,16 @@
                             <button type="submit" class="menu-item">↻ Reclassify Topics</button>
                         </form>
 
+                        <form method="POST" action="{{ url_for('admin.sync_allsides') }}">
+                            <input type="hidden" name="label" value="{{ active_label or '' }}">
+                            <button type="submit" class="menu-item">🟢 Sync AllSides Ratings</button>
+                        </form>
+
+                        <button onclick="runMergeOutlets()" class="menu-item">🛠 Merge Duplicate Outlets</button>
+
                         <div class="menu-divider"></div>
 
-                        <a href="/scrape-blocklist" class="menu-item" style="text-decoration:none;">🚫 Scrape Blocklist</a>
+                        <a href="/scrape-blocklist" class="menu-item" style="text-degree:none;">🚫 Scrape Blocklist</a>
                         <form method="POST" action="/audit-scrapes">
                             <button type="submit" class="menu-item">⚡ Audit Bad Scrapes</button>
                         </form>
@@ -730,10 +743,9 @@
                         </div>
                         
                         <div style="font-size: 11px; font-weight: 600; color: var(--text-faint); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                            {% set latest_article = story.articles|sort(attribute='date', reverse=True)|first %}
-                            {% if latest_article %}
+                            {% if story.last_updated %}
                                 <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--accent-light);"></span>
-                                Last updated: <span class="local-date" data-utc="{{ latest_article.date.isoformat() }}Z">{{ latest_article.date.strftime('%Y-%m-%d %H:%M') }}</span>
+                                Last updated: <span class="local-date" data-utc="{{ story.last_updated.isoformat() }}Z">{{ story.last_updated.strftime('%Y-%m-%d %H:%M') }}</span>
                             {% endif %}
                             
                             {% if story.deep_report %}
@@ -813,6 +825,12 @@
                                             <span class="bias-tag bias-5">Right</span>
                                         {% else %}
                                             <span class="bias-tag bias-none">Unrated</span>
+                                        {% endif %}
+
+                                        {% if article.outlet.bias_source == "allsides" %}
+                                            <span class="source-badge as-badge" title="Rated by AllSides">AS</span>
+                                        {% elif article.outlet.bias_source == "ai" %}
+                                            <span class="source-badge ai-badge" title="Rated by AI">AI</span>
                                         {% endif %}
 
                                         {% if article.bias_score and article.bias_score != article.outlet.bias_score %}
@@ -973,6 +991,25 @@
                 el.textContent = date.toLocaleString(undefined, options).replace(',', '');
             }
         });
+    }
+
+    function runMergeOutlets() {
+        if (!confirm('Merge and rename duplicate outlets? This cannot be undone.')) return;
+        fetch('/merge-outlets', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+            if (data.status === 'ok') {
+                alert(
+                'Done!\n' +
+                'Outlets renamed: ' + data.renamed + '\n' +
+                'Duplicate outlets removed: ' + data.outlets_deleted + '\n' +
+                'Articles reassigned: ' + data.articles_reassigned
+                );
+            } else {
+                alert('Error: ' + data.message);
+            }
+            })
+            .catch(e => alert('Request failed: ' + e));
     }
 
     // ── Scroll Position ──

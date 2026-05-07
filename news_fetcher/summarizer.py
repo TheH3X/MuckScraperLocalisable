@@ -19,6 +19,9 @@ langfuse = Langfuse(
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "")
 MODEL = os.environ.get("OLLAMA_MODEL", "")
 
+if not MODEL:
+    logging.warning("OLLAMA_MODEL environment variable is not set. All summarization will fail.")
+
 
 def check_ollama_status():
     """Returns True if Ollama is reachable, False otherwise."""
@@ -54,7 +57,7 @@ def get_topics_list(obj):
 def detect_analysis_type(obj):
     """
     Determine which type of specialized persona to use based on topics.
-    Returns one of: 'politics', 'science', 'gaming', 'sports', 'business', 'default'
+    Returns one of: 'politics', 'science', 'sports', 'business', 'default'
     """
     topics = get_topics_list(obj)
     topics_lower = [t.lower() for t in topics]
@@ -63,8 +66,6 @@ def detect_analysis_type(obj):
         return 'politics'
     if any('science' in t or 'technology' in t for t in topics_lower):
         return 'science'
-    if any('gaming' in t for t in topics_lower):
-        return 'gaming'
     if any('sports' in t for t in topics_lower):
         return 'sports'
     if any('business' in t or 'finance' in t for t in topics_lower):
@@ -77,7 +78,6 @@ def get_persona(analysis_type):
     mapping = {
         'politics': 'political analyst',
         'science': 'science and technology journalist',
-        'gaming': 'gaming journalist',
         'sports': 'sports journalist',
         'business': 'financial journalist',
         'default': 'professional news analyst'
@@ -93,6 +93,9 @@ def summarize_story(story):
     Returns summary string or None if Ollama is unavailable.
     """
     if not story.articles:
+        return None
+
+    if not check_ollama_status():
         return None
 
     analysis_type = detect_analysis_type(story)
@@ -300,39 +303,6 @@ Rules:
 - Use EXACTLY the labels shown above including the colon
 - Focus on accuracy and significance over drama
 - Stay neutral and factual
-- No markdown, no extra formatting
-- Do not add any text before or after the structure above"""
-
-    elif analysis_type == 'gaming':
-        all_articles = left_articles + center_articles + right_articles + unrated_articles
-        combined = format_all_articles(all_articles)
-
-        if not combined.strip():
-            return None
-
-        prompt = f"""You are a gaming journalist writing a detailed report on a gaming story.
-
-Below are articles covering the same story:
-
-{combined}
-
-Write a detailed analytical report using this EXACT format:
-
-The story: [2-3 sentences explaining what happened factually]
-
-What's the game or company: [Brief context about the game, developer, or company involved]
-
-What the coverage is saying: [How gaming outlets and mainstream press are covering this — areas of agreement and disagreement]
-
-Community reaction: [How players and the gaming community are responding based on the coverage. If not mentioned, say "Community reaction not covered in current sources."]
-
-Industry impact: [What this means for the broader gaming industry or market]
-
-What's next: [One sentence on what to watch for — upcoming releases, announcements, or developments]
-
-Rules:
-- Use EXACTLY the labels shown above including the colon
-- Be specific and detailed about the gaming context
 - No markdown, no extra formatting
 - Do not add any text before or after the structure above"""
 

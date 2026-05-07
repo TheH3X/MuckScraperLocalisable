@@ -30,4 +30,4 @@ def login():
 @auth.route("/logout")
 def logout():
     logout_user()
-    return redirect(url_for("public.headlines"))
+    return redirect(url_for("public.index"))

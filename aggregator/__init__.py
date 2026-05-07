@@ -36,15 +36,8 @@ def create_app():
     from aggregator.blueprints.admin import admin
     from aggregator.blueprints.auth import auth
     app.register_blueprint(public)
-    app.register_blueprint(admin)
-    app.register_blueprint(auth)
-
-    try:
-        from aggregator.blueprints.personal import personal
-        app.register_blueprint(personal)
-        logger.info("Personal 'Headlines' blueprint loaded.")
-    except ImportError:
-        pass
+    app.register_blueprint(admin,  url_prefix='/admin')
+    app.register_blueprint(auth,   url_prefix='/auth')
 
     return app
 

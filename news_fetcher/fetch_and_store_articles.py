@@ -5,6 +5,7 @@ from aggregator import create_app, db
 from aggregator.models import Article, Outlet, Story, Topic
 from newsapi import NewsApiClient
 from news_fetcher.outlet_bias_llm import get_outlet_bias_from_llm
+from news_fetcher.allsides_lookup import get_allsides_score
 from news_fetcher.summarizer import summarize_story, check_ollama_status, generate_deep_report, summarize_article
 from news_fetcher.scraper import scrape_article
 from datetime import datetime
@@ -53,6 +54,17 @@ BLOCKED_TITLE_KEYWORDS = [
     "traded to",
     "signs with",
     "scores in",
+    "Nintendo",
+    "PlayStation",
+    "Xbox",
+    "Game review",
+    "Gameplay",
+    "eSports",
+    "patch notes",
+    "Twitch",
+    "Fortnite",
+    "Minecraft",
+    "Pokemon",
 ]
 
 
@@ -65,26 +77,59 @@ def guess_story_title(title):
 
 
 def retry_unrated_outlets():
-    """Find outlets with no bias score and retry Ollama."""
-    unrated = Outlet.query.filter_by(bias_score=None).all()
+    """Find outlets with no bias score and retry.
+    Checks AllSides lookup table first, then falls back to Ollama.
+    Outlets that have failed Ollama 15 or more times are permanently skipped.
+    """
+    unrated = Outlet.query.filter(
+        Outlet.bias_score == None,
+        Outlet.bias_retry_count < 15
+    ).all()
 
     if not unrated:
         logger.info("No unrated outlets to retry.")
         return
 
-    logger.info(f"Found {len(unrated)} unrated outlets, retrying Ollama...")
+    skipped = Outlet.query.filter(
+        Outlet.bias_score == None,
+        Outlet.bias_retry_count >= 15
+    ).count()
+
+    if skipped:
+        logger.info(f"Permanently skipping {skipped} outlets that have failed 15+ times.")
+
+    logger.info(f"Found {len(unrated)} unrated outlets, checking AllSides then Ollama...")
 
     for outlet in unrated:
-        logger.info(f"  Retrying bias score for: {outlet.name}")
+        # Check AllSides lookup table first
+        as_score = get_allsides_score(outlet.name)
+        if as_score is not None:
+            logger.info(f"  AllSides rating found for {outlet.name}: {as_score}")
+            outlet.bias_score = as_score
+            outlet.allsides_bias_score = as_score
+            outlet.bias_source = "allsides"
+            outlet.bias_retry_count = 0
+            for article in outlet.articles:
+                article.bias_score = as_score
+            continue
+
+        # Fall back to Ollama
+        logger.info(f"  No AllSides rating for {outlet.name}, trying Ollama...")
         bias_score = get_outlet_bias_from_llm(outlet.name)
 
         if bias_score is not None:
-            logger.info(f"  Got score {bias_score} for {outlet.name}, updating...")
+            logger.info(f"  Ollama score {bias_score} for {outlet.name}")
             outlet.bias_score = bias_score
+            outlet.bias_source = "ai"
+            outlet.bias_retry_count = 0
             for article in outlet.articles:
                 article.bias_score = bias_score
         else:
-            logger.warning(f"  Still couldn't rate {outlet.name}, will try again next fetch.")
+            outlet.bias_retry_count = (outlet.bias_retry_count or 0) + 1
+            logger.warning(
+                f"  Still couldn't rate {outlet.name} "
+                f"(attempt {outlet.bias_retry_count}/15)."
+            )
 
     db.session.commit()
     logger.info("Finished retrying unrated outlets.")
@@ -166,6 +211,215 @@ def detect_duplicate_outlet_content(content, outlet_id, exclude_article_id=None)
     return False, None
 
 
+def normalize_source_name(name):
+    """Clean up and standardize outlet names."""
+    if not name:
+        return "Unknown"
+
+    name_lower = name.lower().strip()
+
+    # Define normalization map
+    mapping = {
+        "npr topics": "NPR",
+        "home - cbsnews.com": "CBS News",
+        "pbs newshour": "PBS News",
+        "the associated press": "Associated Press",
+        "fox news": "Fox News",
+        "abc news": "ABC News",
+        "nbc news": "NBC News",
+        "the wall street journal": "WSJ",
+        "the new york times": "New York Times",
+        "the washington post": "Washington Post",
+        
+    }
+
+    # Direct match in mapping
+    if name_lower in mapping:
+        return mapping[name_lower]
+
+    # Partial matches/cleaning
+
+    # Al Jazeera — strip long feed title
+    if "al jazeera" in name_lower:
+        return "Al Jazeera"
+
+    # The Hill — strip " news" suffix
+    if "the hill" in name_lower:
+        return "The Hill"
+
+    # New York Times variants
+    if "nyt" in name_lower or "new york times" in name_lower:
+        return "New York Times"
+
+    # The Guardian variants
+    if "guardian" in name_lower:
+        return "The Guardian"
+
+    # AP / Associated Press
+    if "associated press" in name_lower or name_lower == "ap news":
+        return "Associated Press"
+
+    # Google News — flag as aggregator
+    if name_lower == "google news":
+        return "Google News"
+
+    # Reuters variants
+    if "reuters" in name_lower:
+        return "Reuters"
+
+    # Washington Post variants
+    if "washington post" in name_lower:
+        return "Washington Post"
+
+    # Wall Street Journal variants  
+    if "wall street journal" in name_lower or name_lower == "wsj":
+        return "WSJ"
+
+    # NBC variants — keep NBCSports separate
+    if "nbc news" in name_lower:
+        return "NBC News"
+    if "nbcsports" in name_lower or "nbc sports" in name_lower:
+        return "NBC Sports"
+
+    # CBS variants
+    if "cbs news" in name_lower:
+        return "CBS News"
+
+    # PBS variants
+    if "pbs" in name_lower and "news" in name_lower:
+        return "PBS News"
+
+    # ABC News
+    if "abc news" in name_lower:
+        return "ABC News"
+
+    # NPR variants
+    if "npr" in name_lower:
+        return "NPR"
+
+    # BBC variants
+    if "bbc" in name_lower:
+        return "BBC News"
+
+    # Fox News — keep Fox Business separate
+    if "fox news" in name_lower:
+        return "Fox News"
+    if "fox business" in name_lower:
+        return "Fox Business"
+
+    # Bloomberg
+    if "bloomberg" in name_lower:
+        return "Bloomberg"
+
+    # Axios
+    if "axios" in name_lower:
+        return "Axios"
+
+    # CNN
+    if name_lower == "cnn" or name_lower.startswith("cnn "):
+        return "CNN"
+
+    # CNBC
+    if "cnbc" in name_lower and "tv18" not in name_lower:
+        return "CNBC"
+
+    return name
+
+
+def merge_duplicate_outlets():
+    """
+    One-time (and periodic) cleanup:
+    1. Re-normalizes all outlet names using normalize_source_name().
+    2. Finds outlets whose normalized name matches another outlet.
+    3. Merges duplicates — reassigns all articles to the canonical outlet,
+       then deletes the duplicate.
+    Returns a summary dict with counts for logging/display.
+    """
+    from aggregator.models import Outlet, Article
+
+    outlets = Outlet.query.all()
+    renamed = 0
+    merged = 0
+    deleted = 0
+
+    # Step 1: Normalize all names in-place
+    for outlet in outlets:
+        clean = normalize_source_name(outlet.name)
+        if clean != outlet.name:
+            logger.info(f"  [Merge] Renaming '{outlet.name}' → '{clean}'")
+            outlet.name = clean
+            renamed += 1
+
+    db.session.flush()
+
+    # Step 2: Find duplicates by name (case-insensitive)
+    # For each group of outlets with the same normalized name,
+    # keep the one with the most articles (canonical), merge the rest into it.
+    outlets = Outlet.query.all()
+    name_map = {}
+    for outlet in outlets:
+        key = outlet.name.lower().strip()
+        if key not in name_map:
+            name_map[key] = []
+        name_map[key].append(outlet)
+
+    for name_key, group in name_map.items():
+        if len(group) <= 1:
+            continue
+
+        # Canonical = outlet with the most articles
+        canonical = max(group, key=lambda o: len(o.articles))
+        duplicates = [o for o in group if o.id != canonical.id]
+
+        for dup in duplicates:
+            article_count = Article.query.filter_by(outlet_id=dup.id).count()
+            logger.info(
+                f"  [Merge] Merging '{dup.name}' (id={dup.id}, "
+                f"{article_count} articles) → '{canonical.name}' (id={canonical.id})"
+            )
+
+            # CRITICAL: Reassign articles BEFORE deleting the outlet.
+            # Use direct SQL update to avoid SQLAlchemy session conflicts
+            # that can cause articles to be orphaned.
+            db.session.execute(
+                db.text(
+                    "UPDATE articles SET outlet_id = :canonical_id "
+                    "WHERE outlet_id = :dup_id"
+                ),
+                {"canonical_id": canonical.id, "dup_id": dup.id}
+            )
+            db.session.flush()
+
+            # Verify reassignment before deleting
+            remaining = Article.query.filter_by(outlet_id=dup.id).count()
+            if remaining > 0:
+                logger.error(
+                    f"  [Merge] ABORT: {remaining} articles still attached to "
+                    f"'{dup.name}' after reassignment — skipping delete"
+                )
+                continue
+
+            # Copy bias data if canonical is missing it
+            if canonical.bias_score is None and dup.bias_score is not None:
+                canonical.bias_score = dup.bias_score
+                canonical.bias_source = dup.bias_source
+                canonical.allsides_bias_score = getattr(dup, 'allsides_bias_score', None)
+
+            db.session.delete(dup)
+            merged += article_count
+            deleted += 1
+
+    db.session.commit()
+
+    summary = {
+        'renamed': renamed,
+        'outlets_deleted': deleted,
+        'articles_reassigned': merged,
+    }
+    logger.info(f"  [Merge] Complete: {summary}")
+    return summary
+
+
 def store_articles(articles_data, topic_name):
     """
     Store a list of normalized article dicts into the database,
@@ -184,7 +438,7 @@ def store_articles(articles_data, topic_name):
         title        = article.get("title")
         content      = article.get("content") or ""
         raw_url      = article.get("url")
-        source_name  = article.get("source_name", "Unknown")
+        source_name  = normalize_source_name(article.get("source_name", "Unknown"))
         published_at = article.get("published_at", datetime.utcnow())
         image_url    = article.get("image_url")
 
@@ -219,22 +473,39 @@ def store_articles(articles_data, topic_name):
         logger.info(f"Processing: {title}")
 
         if not outlet:
-            logger.info(f"  New outlet found: {source_name}, asking Ollama for bias score...")
-            bias_score = get_outlet_bias_from_llm(source_name)
+            as_score = get_allsides_score(source_name)
+            if as_score is not None:
+                logger.info(f"  New outlet {source_name}: AllSides rating {as_score}")
+                bias_score = as_score
+                bias_source = "allsides"
+                allsides_bias_score = as_score
+            else:
+                logger.info(f"  New outlet {source_name}: no AllSides rating, asking Ollama...")
+                bias_score = get_outlet_bias_from_llm(source_name)
+                bias_source = "ai" if bias_score is not None else None
+                allsides_bias_score = None
+
             outlet = Outlet(
                 name=source_name,
                 url=url,
                 description="N/A",
-                bias_score=bias_score
+                bias_score=bias_score,
+                allsides_bias_score=allsides_bias_score,
+                bias_source=bias_source
             )
             db.session.add(outlet)
             db.session.flush()
 
         # Generate embedding for this article
-        # Use title + first 500 chars of content for better semantic matching
-        from news_fetcher.summarizer import strip_html
-        text_for_embedding = f"{title} {strip_html(content)[:400]}"
-        article_embedding = get_embedding(text_for_embedding)
+        # Use title + snippet for better semantic matching
+        from news_fetcher.story_grouper import strip_video_prefix
+        clean_title = strip_video_prefix(title)
+        embed_text = clean_title
+        if content:
+            from news_fetcher.summarizer import strip_html
+            snippet = strip_html(content)[:200].strip()
+            embed_text = f"{clean_title}. {snippet}"
+        article_embedding = get_embedding(embed_text)
         
         story = find_or_create_story(title, db, Story, recent_stories,
                                      article_embedding=article_embedding,
@@ -400,7 +671,7 @@ def fetch_gnews(topic_name, query=None, category=None):
             params = {
                 "q":      query,
                 "lang":   "en",
-                "max":    10,
+                "max":    20,
                 "apikey": api_key,
             }
         elif category:
@@ -410,7 +681,7 @@ def fetch_gnews(topic_name, query=None, category=None):
                 "category": category,
                 "lang":     "en",
                 "country":  "us",
-                "max":      10,
+                "max":      20,
                 "apikey":   api_key,
             }
         else:
@@ -419,7 +690,7 @@ def fetch_gnews(topic_name, query=None, category=None):
             params = {
                 "lang":    "en",
                 "country": "us",
-                "max":     10,
+                "max":     20,
                 "apikey":  api_key,
             }
 
@@ -494,7 +765,7 @@ def regroup_ungrouped_stories():
             continue
 
         article = story.articles[0]
-        if not article.embedding:
+        if article.embedding is None:
             continue
 
         # Try to match to an existing multi-article story
@@ -524,34 +795,6 @@ def regroup_ungrouped_stories():
 
     db.session.commit()
     logger.info(f"Re-grouping complete. Merged {merged} stories.")
-
-
-def retry_unsummarized_stories(batch_size=10):
-    """Find stories without summaries and generate them — capped at batch_size."""
-    if not check_ollama_status():
-        logger.info("Ollama offline, skipping auto-summarization.")
-        return
-
-    unsummarized = Story.query.filter(
-        (Story.summary == None) |
-        (Story.summary == Story.title)
-    ).limit(batch_size).all()
-
-    if not unsummarized:
-        logger.info("All stories have summaries.")
-        return
-
-    logger.info(f"Summarizing up to {batch_size} stories...")
-    for story in unsummarized:
-        if not story.articles:
-            continue
-        summary = summarize_story(story)
-        if summary:
-            story.summary = summary
-            logger.info(f"  Summarized: {story.title[:60]}")
-
-    db.session.commit()
-    logger.info("Finished summarization batch.")
 
 
 def generate_missing_deep_reports(batch_size=5):
@@ -602,10 +845,16 @@ def generate_missing_embeddings(batch_size=50):
     logger.info(f"Generating embeddings for {len(missing)} articles...")
     count = 0
     for article in missing:
-        # Align with store_articles and force_regroup_all: use title + content
-        text = f"{article.title} {(article.content or '')[:500]}"
-        embedding = get_embedding(text)
-        if embedding:
+        # Align with store_articles and force_regroup_all: use title + snippet
+        from news_fetcher.story_grouper import strip_video_prefix
+        clean_title = strip_video_prefix(article.title)
+        embed_text = clean_title
+        if article.content:
+            from news_fetcher.summarizer import strip_html
+            snippet = strip_html(article.content)[:200].strip()
+            embed_text = f"{clean_title}. {snippet}"
+        embedding = get_embedding(embed_text)
+        if embedding is not None:
             article.embedding = embedding
             count += 1
 
@@ -615,7 +864,7 @@ def generate_missing_embeddings(batch_size=50):
 
 def audit_existing_scrapes(batch_size=200):
     """
-    Scan all stored article content for bad scrapes — login walls, captchas,
+    Scan non-audited article content for bad scrapes — login walls, captchas,
     bot detection pages, and outlet-level duplicate content.
     Clears bad content and adds offending domains to the blocklist.
     """
@@ -623,16 +872,24 @@ def audit_existing_scrapes(batch_size=200):
     import re
 
     articles = Article.query.filter(
+        Article.scrape_audited == False,
         Article.content != None,
         Article.content != ""
     ).order_by(Article.outlet_id, Article.id).all()
 
-    logger.info(f"[Audit] Scanning {len(articles)} articles for bad scrapes...")
+    if not articles:
+        logger.info("[Audit] No new articles to audit.")
+        return
+
+    logger.info(f"[Audit] Scanning {len(articles)} new articles for bad scrapes...")
 
     cleared = 0
     auto_blocked = set()
 
     for i, article in enumerate(articles):
+        # Mark as audited immediately
+        article.scrape_audited = True
+
         if not article.content:
             continue
 
@@ -757,10 +1014,16 @@ def force_regroup_all():
     logger.info(f"Regenerating embeddings for {len(all_articles)} articles (this may take a while)...")
     
     for i, article in enumerate(all_articles):
-        # Use title + first 500 chars of content
-        text = f"{article.title} {(article.content or '')[:500]}"
-        embedding = get_embedding(text)
-        if embedding:
+        # Use title + snippet for better semantic matching
+        from news_fetcher.story_grouper import strip_video_prefix
+        clean_title = strip_video_prefix(article.title)
+        embed_text = clean_title
+        if article.content:
+            from news_fetcher.summarizer import strip_html
+            snippet = strip_html(article.content)[:200].strip()
+            embed_text = f"{clean_title}. {snippet}"
+        embedding = get_embedding(embed_text)
+        if embedding is not None:
             article.embedding = embedding
         
         if (i + 1) % 50 == 0:
@@ -923,7 +1186,6 @@ def ollama_catchup():
     generate_missing_headlines()
     regroup_ungrouped_stories()
     retry_unrated_outlets()
-    retry_unsummarized_stories(batch_size=10)
     logger.info("=== Ollama catchup complete ===")
 
 
@@ -948,12 +1210,289 @@ def fetch_and_store_articles(topic_name, mode="top", query=None,
     """
     Main entry point. Fetches from both NewsAPI and GNews for a given topic.
     """
-    retry_unrated_outlets()
     fetch_newsapi(topic_name, mode=mode, query=query,
                   country=country, category=category)
     fetch_gnews(topic_name, query=gnews_query, category=gnews_category)
-    retry_unsummarized_stories()
     cleanup_old_payloads()
+
+
+def process_current_edition():
+    """
+    Exhaustively summarize and analyze ONLY the stories selected for the latest edition.
+    1. Finds the most recent Edition.
+    2. For every story in that edition:
+       - Generates the Story Summary (if missing).
+       - Generates the Deep Report (if multi-source and missing).
+       - Generates a summary for EVERY article associated with that story.
+    This ensures the static headlines site is fully populated.
+    """
+    from news_fetcher.summarizer import (
+        summarize_story, generate_deep_report, summarize_article, check_ollama_status
+    )
+    from aggregator.models import Edition, EditionStory
+
+    if not check_ollama_status():
+        logger.info("[Processor] Ollama offline, skipping edition processing.")
+        return
+
+    latest_edition = Edition.query.order_by(Edition.created_at.desc()).first()
+    if not latest_edition:
+        logger.info("[Processor] No edition found to process.")
+        return
+
+    stories = [es.story for es in latest_edition.edition_stories.order_by(EditionStory.rank).all()]
+    
+    logger.info(f"[Processor] Processing {len(stories)} stories from {latest_edition.edition_type} edition...")
+
+    STALE_ARTICLE_THRESHOLD = 3  # new articles needed to trigger reanalysis
+
+    for story in stories:
+        article_count = len(story.articles)
+        if article_count == 0:
+            continue
+
+        try:
+            # Check if analysis is stale — enough new articles arrived
+            # since the last time this story was summarized
+            is_stale = False
+            if story.summary_generated_at and article_count >= 2:
+                new_article_count = sum(
+                    1 for a in story.articles
+                    if a.fetched_at and a.fetched_at > story.summary_generated_at
+                )
+                if new_article_count >= STALE_ARTICLE_THRESHOLD:
+                    logger.info(
+                        f"  [Processor] Story stale ({new_article_count} new articles "
+                        f"since last analysis): {story.title[:60]}"
+                    )
+                    story.summary = None
+                    story.deep_report = None
+                    is_stale = True
+
+            # 1. Process Story-level Summaries
+            if article_count >= 2:
+                if not story.summary:
+                    summary = summarize_story(story)
+                    if summary:
+                        story.summary = summary
+                        story.summary_generated_at = datetime.utcnow()
+                        logger.info(f"  [Processor] Story summary: {story.title[:60]}")
+
+                if not story.deep_report:
+                    report = generate_deep_report(story)
+                    if report:
+                        story.deep_report = report
+                        logger.info(f"  [Processor] Deep report: {story.title[:60]}")
+            else:
+                # Single-article story: Ensure story summary exists
+                if not story.summary:
+                    art = story.articles[0]
+                    summary = art.summary or summarize_article(art)
+                    if summary:
+                        art.summary = summary
+                        story.summary = summary
+                        story.summary_generated_at = datetime.utcnow()
+                        logger.info(f"  [Processor] Single-source summary: {story.title[:60]}")
+
+                # Ensure old stories that once had multiple articles (and thus a deep_report)
+                # are cleaned up when they later appear as single-article stories.
+                story.deep_report = None
+
+            db.session.commit()
+            # This is critical for the static site links
+            for article in story.articles:
+                if not article.summary and article.content:
+                    summary = summarize_article(article)
+                    if summary:
+                        article.summary = summary
+                        logger.info(f"    [Processor] Child article summary: {article.title[:60]}")
+
+            db.session.commit()
+
+        except Exception as e:
+            logger.error(f"  [Processor] Error processing story {story.id}: {e}")
+            db.session.rollback()
+
+    logger.info("[Processor] Current edition processing complete.")
+
+
+def sync_allsides_ratings():
+    """
+    Sync all outlets against the AllSides lookup table.
+    - Upgrades Ollama-rated outlets to AllSides ratings where a match exists
+    - Updates outlets whose AllSides score has changed since last sync
+    - Propagates any score changes to all articles for that outlet
+    Run monthly via scheduler, or manually via admin menu.
+    """
+    from news_fetcher.allsides_lookup import get_allsides_score
+    from aggregator.models import Outlet
+
+    logger.info("=== AllSides sync starting ===")
+
+    outlets = Outlet.query.all()
+    updated = 0
+    skipped = 0
+
+    for outlet in outlets:
+        as_score = get_allsides_score(outlet.name)
+
+        if as_score is None:
+            skipped += 1
+            continue
+
+        score_changed = outlet.allsides_bias_score != as_score
+        not_yet_allsides = outlet.bias_source != "allsides"
+
+        if score_changed or not_yet_allsides:
+            old_score = outlet.bias_score
+            outlet.bias_score = as_score
+            outlet.allsides_bias_score = as_score
+            outlet.bias_source = "allsides"
+            outlet.bias_retry_count = 0
+
+            for article in outlet.articles:
+                article.bias_score = as_score
+
+            logger.info(
+                f"  [AllSides Sync] {outlet.name}: "
+                f"{old_score} -> {as_score} "
+                f"({'upgraded from AI' if not_yet_allsides else 'score updated'})"
+            )
+            updated += 1
+
+    db.session.commit()
+    logger.info(f"=== AllSides sync complete. Updated {updated}, no match for {skipped} outlets. ===")
+
+
+def publish_edition():
+    """
+    Create an Edition record for the current fetch cycle.
+    Determines edition type (night/morning/afternoon/evening) from Eastern time.
+    Only includes stories that are new since the last edition, or have received
+    new articles since then. Falls back to best available if fewer than 20 eligible.
+    Skips if this edition slot already exists.
+    """
+    from zoneinfo import ZoneInfo
+    from aggregator.models import Edition, Story, EditionStory
+
+    eastern = ZoneInfo('America/New_York')
+    now_eastern = datetime.now(eastern)
+    hour = now_eastern.hour
+    today = now_eastern.date()
+
+    if 7 <= hour < 12:
+        edition_type = 'morning'
+    elif 12 <= hour < 17:
+        edition_type = 'afternoon'
+    elif 17 <= hour < 22:
+        edition_type = 'evening'
+    else:
+        edition_type = 'night'
+
+    # Skip if this edition slot already published
+    existing = Edition.query.filter_by(date=today, edition_type=edition_type).first()
+    if existing:
+        logger.info(f"[Edition] {edition_type} edition for {today} already published, skipping.")
+        return
+
+    # Look back across all editions published in the last 24 hours
+    recent_cutoff = datetime.utcnow() - timedelta(hours=24)
+    recent_editions = Edition.query.filter(
+        Edition.created_at >= recent_cutoff,
+        Edition.published == True
+    ).order_by(Edition.created_at.desc()).all()
+
+    prev_story_ids = set()
+    for ed in recent_editions:
+        for es in ed.edition_stories.all():
+            prev_story_ids.add(es.story_id)
+
+    # Most recent edition's timestamp is used for the new-articles check
+    prev_edition = Edition.query.filter(
+        Edition.published == True
+    ).order_by(Edition.created_at.desc()).first()
+    prev_published_at = prev_edition.created_at if prev_edition else None
+
+    # Get top 50 scored stories as candidates
+    story_cutoff = datetime.utcnow() - timedelta(days=3)
+    candidates = Story.query.filter(
+        Story.headline_score > 0,
+        Story.created_at >= story_cutoff
+    ).order_by(Story.headline_score.desc()).limit(50).all()
+
+    # Exclude single-article stories with no scraped content
+    candidates = [
+        s for s in candidates
+        if not (
+            len(s.articles) == 1 and
+            not (s.articles[0].content or '').strip()
+        )
+    ]
+
+    eligible = []
+    carried = []
+    seen_story_ids = set()
+
+    for story in candidates:
+        if story.id in seen_story_ids:
+            continue
+        seen_story_ids.add(story.id)
+
+        if story.id not in prev_story_ids:
+            # New story not in previous edition
+            eligible.append(story)
+        elif prev_published_at:
+            # Story was in previous edition — only include if new articles arrived
+            new_articles = [
+                a for a in story.articles
+                if a.fetched_at and a.fetched_at > prev_published_at
+            ]
+            if new_articles:
+                eligible.append(story)
+            else:
+                carried.append(story)
+
+    # Fill to 20 with carried-over stories if needed.
+    # Only carry stories that are less than 48 hours old to prevent
+    # ancient high-scored stories from recycling indefinitely.
+    carry_cutoff = datetime.utcnow() - timedelta(hours=48)
+    fresh_carried = [s for s in carried if s.created_at >= carry_cutoff]
+    if len(eligible) < 20:
+        slots_left = 20 - len(eligible)
+        eligible.extend(fresh_carried[:slots_left])
+
+    # Final dedup safety net — ensures no story_id appears twice
+    # regardless of how eligible was built
+    seen = set()
+    deduped = []
+    for s in eligible:
+        if s.id not in seen:
+            seen.add(s.id)
+            deduped.append(s)
+    top_20 = deduped[:20]
+
+    if not top_20:
+        logger.warning(f"[Edition] No stories available for {edition_type} edition on {today}.")
+        return
+
+    edition = Edition(date=today, edition_type=edition_type)
+    db.session.add(edition)
+    db.session.flush()
+
+    for rank, story in enumerate(top_20, 1):
+        es = EditionStory(
+            edition_id=edition.id,
+            story_id=story.id,
+            rank=rank,
+            headline_score_at_publish=story.headline_score
+        )
+        db.session.add(es)
+
+    db.session.commit()
+    logger.info(
+        f"[Edition] Published {edition_type} edition for {today} "
+        f"with {len(top_20)} stories ({len(eligible) - len(top_20[:len(eligible)])} carried over)."
+    )
 
 
 if __name__ == "__main__":

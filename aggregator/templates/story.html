@@ -1,6 +1,12 @@
 <!DOCTYPE html>
 <html data-theme="light">
 <head>
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon_32.png') }}">
+    <link rel="icon" type="image/png" sizes="128x128" href="{{ url_for('static', filename='favicon_128.png') }}">
+    <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='favicon_192.png') }}">
+    <link rel="icon" type="image/png" sizes="512x512" href="{{ url_for('static', filename='favicon_512.png') }}">
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='favicon_180.png') }}">
     <title>{{ story.headline or story.title }} — MuckScraper</title>
     <style>
         :root {
@@ -120,6 +126,18 @@
         .bias-5 { background: #b51a1a; }
         .bias-none { background: #ddd; color: #666; }
 
+        .source-badge {
+            font-size: 9px;
+            font-weight: 800;
+            padding: 2px 5px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            vertical-align: middle;
+        }
+        .as-badge { background: #2a7a2a; color: white; }
+        .ai-badge { background: #555; color: white; }
+
         .btn-view {
             display: inline-block;
             background: var(--bg);
@@ -166,11 +184,28 @@
 </div>
 
 <div class="container">
-    <div class="story-card">
-        <h1>{{ story.headline or story.title }}</h1>
+<div class="story-card">
+    <h1>{{ story.headline or story.title }}</h1>
 
-        <div class="analysis-box">
-            <div class="analysis-label">Multi-Source Analysis</div>
+    <div style="font-size: 12px; font-weight: 600; color: var(--text-faint); margin-bottom: 32px; display: flex; align-items: center; gap: 12px;">
+        <span>{{ story.articles|length }} SOURCES</span>
+        <span style="width: 4px; height: 4px; border-radius: 50%; background: var(--border);"></span>
+        <span>PUBLISHED {{ story.created_at.strftime('%b %d, %Y') }}</span>
+        {% if story.last_updated %}
+            <span style="width: 4px; height: 4px; border-radius: 50%; background: var(--border);"></span>
+            <span>LAST UPDATED: <span class="local-date" data-utc="{{ story.last_updated.isoformat() }}Z">{{ story.last_updated.strftime('%b %d, %Y %H:%M') }}</span></span>
+        {% endif %}
+    </div>
+
+    <div class="analysis-box">
+            <div class="analysis-label" style="display: flex; justify-content: space-between; align-items: center;">
+                <span>Multi-Source Analysis</span>
+                {% if ollama_online and (not story.summary or story.summary == story.title or not story.deep_report) %}
+                    <form method="POST" action="{{ url_for('admin.summarize_story_route', story_id=story.id) }}" style="display: inline;">
+                        <button type="submit" class="btn-view" style="cursor: pointer; padding: 4px 12px; font-size: 10px;">Summarize Story</button>
+                    </form>
+                {% endif %}
+            </div>
             {% if story.deep_report %}
                 <div class="analysis-content">
                     {% for line in story.deep_report.split('\n') %}
@@ -192,7 +227,7 @@
                 </div>
             {% else %}
                 <div class="status-msg">
-                    Processing intelligence from multiple sources...
+                    No multi-source analysis has been generated yet. Use the summarize action to process this story.
                 </div>
             {% endif %}
         </div>
@@ -209,12 +244,20 @@
                                 {% if b == 1 %}Left{% elif b == 2 %}Lean Left{% elif b == 3 %}Center{% elif b == 4 %}Lean Right{% elif b == 5 %}Right{% endif %}
                             </span>
                         {% endif %}
-                        <span>{{ article.date.strftime('%b %d, %Y') }}</span>
+                        <span class="local-date" data-utc="{{ article.date.isoformat() }}Z">{{ article.date.strftime('%b %d, %Y') }}</span>
                     </div>
                     <a href="{{ url_for('public.view_article', article_id=article.id) }}" class="article-link">{{ article.title }}</a>
-                    <div style="display: flex; gap: 12px;">
+
+                    <div style="display: flex; gap: 12px; margin-top: 16px; align-items: center;">
                         <a href="{{ url_for('public.view_article', article_id=article.id) }}" class="btn-view">Read Summary & Text →</a>
-                        <a href="{{ article.url }}" target="_blank" style="font-size: 12px; color: var(--text-faint); margin-top: 8px;">View Original Source ↗</a>
+                        
+                        {% if not article.summary and ollama_online %}
+                        <form method="POST" action="{{ url_for('admin.summarize_article_route', article_id=article.id) }}" style="display: inline;">
+                            <button type="submit" class="btn-view" style="cursor: pointer;">Summarize</button>
+                        </form>
+                        {% endif %}
+
+                        <a href="{{ article.url }}" target="_blank" style="font-size: 12px; color: var(--text-faint);">View Original Article</a>
                     </div>
                 </div>
             {% endfor %}
@@ -238,6 +281,27 @@
 
     const savedTheme = localStorage.getItem('muckscraper-theme') || 'light';
     applyTheme(savedTheme);
+
+    // ── Local Timezone Conversion ──
+    function convertToLocalTime() {
+        const dateElements = document.querySelectorAll('.local-date');
+        dateElements.forEach(el => {
+            const utcDate = el.getAttribute('data-utc');
+            if (utcDate) {
+                const date = new Date(utcDate);
+                const options = { 
+                    year: 'numeric', 
+                    month: 'short', 
+                    day: '2-digit',
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    hour12: false 
+                };
+                el.textContent = date.toLocaleString(undefined, options).replace(',', '');
+            }
+        });
+    }
+    document.addEventListener('DOMContentLoaded', convertToLocalTime);
 </script>
 
 </body>

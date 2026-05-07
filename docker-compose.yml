@@ -10,6 +10,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
 
   scheduler:
     build:
@@ -31,6 +32,7 @@ services:
       OLLAMA_MODEL: ${OLLAMA_MODEL}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL}
       OLLAMA_MAC: ${OLLAMA_MAC}
+      N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
       LANGFUSE_HOST: ${LANGFUSE_HOST}
@@ -55,9 +57,11 @@ services:
       OLLAMA_MODEL: ${OLLAMA_MODEL}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL}
       OLLAMA_MAC: ${OLLAMA_MAC}
+      N8N_WEBHOOK_URL: ${N8N_WEBHOOK_URL}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
       LANGFUSE_HOST: ${LANGFUSE_HOST}
+    restart: unless-stopped
     volumes:
       - .:/app
 
