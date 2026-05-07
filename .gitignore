@@ -5,6 +5,7 @@ __pycache__/
 destroy.sh
 GEMINI.md
 printouts
+.gitignore
 
 # Personal Headline feature files
 aggregator/public_app.py
