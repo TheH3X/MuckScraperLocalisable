@@ -2,6 +2,7 @@
 # news_fetcher/fetch_and_store_articles.py
 
 from aggregator import create_app, db
+from aggregator.article_signals import ROUNDUP_TITLE_PATTERNS, is_roundup_article
 from aggregator.models import Article, Outlet, Story, Topic
 from newsapi import NewsApiClient
 from news_fetcher.outlet_bias_llm import get_outlet_bias_from_llm
@@ -12,7 +13,8 @@ from datetime import datetime
 import requests
 import os
 import json
-from news_fetcher.story_grouper import find_or_create_story, get_embedding
+import re
+from news_fetcher.story_grouper import find_or_create_story, get_embedding, normalize_title_tokens, titles_are_near_duplicates
 from datetime import datetime, timedelta
 from news_fetcher.topic_classifier import classify_article
 from news_fetcher.headline_generator import generate_story_headline, generate_missing_headlines
@@ -67,6 +69,92 @@ BLOCKED_TITLE_KEYWORDS = [
     "Pokemon",
 ]
 
+BIAS_BUCKETS = ("left", "lean_left", "center", "lean_right", "right", "unrated")
+
+
+def empty_store_metrics(topic_name, provider=None, input_articles=0):
+    return {
+        "topic_name": topic_name,
+        "provider": provider,
+        "input_articles": input_articles,
+        "stored": 0,
+        "new_outlets": 0,
+        "stories_touched": 0,
+        "skipped": {
+            "missing_required": 0,
+            "blocked_source": 0,
+            "blocked_title": 0,
+            "duplicate_url": 0,
+            "duplicate_title_outlet": 0,
+        },
+        "scrape_statuses": {},
+        "bias_buckets": {bucket: 0 for bucket in BIAS_BUCKETS},
+        "bias_sources": {
+            "allsides": 0,
+            "ai": 0,
+            "unrated": 0,
+        },
+    }
+
+
+def merge_count_maps(target, source):
+    for key, value in (source or {}).items():
+        target[key] = target.get(key, 0) + value
+
+
+def bias_bucket_for_score(score):
+    if score is None:
+        return "unrated"
+    if score <= 1.5:
+        return "left"
+    if score <= 2.5:
+        return "lean_left"
+    if score <= 3.5:
+        return "center"
+    if score <= 4.5:
+        return "lean_right"
+    return "right"
+
+
+def serialize_grouping_candidate_ids(candidate_story_ids):
+    ids = []
+    for story_id in candidate_story_ids or []:
+        try:
+            ids.append(int(story_id))
+        except (TypeError, ValueError):
+            continue
+    return json.dumps(ids) if ids else None
+
+
+def deserialize_grouping_candidate_ids(raw_value):
+    if not raw_value:
+        return []
+    try:
+        parsed = json.loads(raw_value)
+    except Exception:
+        return []
+    ids = []
+    for story_id in parsed if isinstance(parsed, list) else []:
+        try:
+            ids.append(int(story_id))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
+def truncate_db_string(value, max_length):
+    if value is None:
+        return None
+    value = str(value)
+    if len(value) <= max_length:
+        return value
+    return value[: max_length - 1] + "…"
+
+
+def is_generic_roundup_title(title):
+    normalized = (title or "").strip()
+    return any(pattern.search(normalized) for pattern in ROUNDUP_TITLE_PATTERNS)
+
 
 def guess_story_title(title):
     if ":" in title:
@@ -74,6 +162,107 @@ def guess_story_title(title):
     if "-" in title:
         return title.split("-")[0]
     return " ".join(title.split()[:6])
+
+
+def _story_dedupe_titles(story, max_article_titles=5):
+    titles = []
+    if story.title:
+        titles.append(story.title)
+    if story.headline and story.headline != story.title:
+        titles.append(story.headline)
+    for article in story.articles[:max_article_titles]:
+        if article.title:
+            titles.append(article.title)
+    return titles
+
+
+def _story_signature_tokens(story):
+    tokens = set()
+    for title in _story_dedupe_titles(story):
+        tokens.update(normalize_title_tokens(title))
+    return tokens
+
+
+EDITION_DEDUPE_GENERIC_TOKENS = {
+    "advances",
+    "around",
+    "asks",
+    "call",
+    "calls",
+    "crowds",
+    "deal",
+    "desperate",
+    "early",
+    "experts",
+    "faces",
+    "gather",
+    "guy",
+    "her",
+    "here",
+    "house",
+    "inside",
+    "just",
+    "live",
+    "meets",
+    "month",
+    "more",
+    "out",
+    "panel",
+    "press",
+    "questions",
+    "readies",
+    "release",
+    "releases",
+    "running",
+    "say",
+    "scepticism",
+    "security",
+    "seeks",
+    "senate",
+    "spotlight",
+    "talks",
+    "test",
+    "tight",
+    "visit",
+    "vote",
+    "wire",
+    "where",
+    "wife",
+    "win",
+}
+
+
+def _distinctive_shared_tokens(tokens_a, tokens_b):
+    return {
+        token for token in (tokens_a & tokens_b)
+        if token not in EDITION_DEDUPE_GENERIC_TOKENS
+    }
+
+
+def stories_look_duplicate_for_edition(story_a, story_b):
+    titles_a = _story_dedupe_titles(story_a)
+    titles_b = _story_dedupe_titles(story_b)
+
+    for title_a in titles_a:
+        for title_b in titles_b:
+            if titles_are_near_duplicates(title_a, title_b):
+                return True
+
+    tokens_a = _story_signature_tokens(story_a)
+    tokens_b = _story_signature_tokens(story_b)
+    shared_tokens = tokens_a & tokens_b
+    distinctive_shared = _distinctive_shared_tokens(tokens_a, tokens_b)
+    if len(distinctive_shared) >= 4:
+        return True
+    if len(distinctive_shared) >= 3:
+        return True
+
+    outlets_a = {((article.outlet.name or "").strip().lower()) for article in story_a.articles if article.outlet and article.outlet.name}
+    outlets_b = {((article.outlet.name or "").strip().lower()) for article in story_b.articles if article.outlet and article.outlet.name}
+    if outlets_a & outlets_b and len(distinctive_shared) >= 2 and len(shared_tokens) >= 3:
+        return True
+
+    return False
 
 
 def retry_unrated_outlets():
@@ -420,14 +609,15 @@ def merge_duplicate_outlets():
     return summary
 
 
-def store_articles(articles_data, topic_name):
+def store_articles(articles_data, topic_name, provider=None):
     """
     Store a list of normalized article dicts into the database,
     tagging them with the given topic.
     articles_data: list of dicts with keys:
         title, content, url, source_name, published_at, image_url
     """
-    stored = 0
+    metrics = empty_store_metrics(topic_name, provider=provider, input_articles=len(articles_data))
+    stories_touched = set()
 
     # Pre-fetch recent stories once for the whole batch
     cutoff = datetime.utcnow() - timedelta(days=7)
@@ -443,22 +633,26 @@ def store_articles(articles_data, topic_name):
         image_url    = article.get("image_url")
 
         if not title or not raw_url:
+            metrics["skipped"]["missing_required"] += 1
             continue
             
         url = normalize_url(raw_url)
 
         if any(blocked in url.lower() for blocked in BLOCKED_SOURCES):
             logger.debug(f"Skipping blocked source: {url}")
+            metrics["skipped"]["blocked_source"] += 1
             continue
 
         if any(kw in title.lower() for kw in BLOCKED_TITLE_KEYWORDS):
             logger.debug(f"Skipping blocked title: {title}")
+            metrics["skipped"]["blocked_title"] += 1
             continue
 
         # Check for URL duplicate (normalized)
         existing = Article.query.filter_by(url=url).first()
         if existing:
             logger.debug(f"Skipping duplicate URL: {title}")
+            metrics["skipped"]["duplicate_url"] += 1
             continue
 
         # Check for Title + Source duplicate (catch same article, different URL)
@@ -468,9 +662,13 @@ def store_articles(articles_data, topic_name):
             existing_title = Article.query.filter_by(title=title, outlet_id=outlet.id).first()
             if existing_title:
                 logger.debug(f"Skipping duplicate Title+Outlet: {title}")
+                metrics["skipped"]["duplicate_title_outlet"] += 1
                 continue
         
         logger.info(f"Processing: {title}")
+
+        if is_roundup_article(title, raw_url):
+            image_url = None
 
         if not outlet:
             as_score = get_allsides_score(source_name)
@@ -495,6 +693,7 @@ def store_articles(articles_data, topic_name):
             )
             db.session.add(outlet)
             db.session.flush()
+            metrics["new_outlets"] += 1
 
         # Generate embedding for this article
         # Use title + snippet for better semantic matching
@@ -507,9 +706,10 @@ def store_articles(articles_data, topic_name):
             embed_text = f"{clean_title}. {snippet}"
         article_embedding = get_embedding(embed_text)
         
-        story = find_or_create_story(title, db, Story, recent_stories,
-                                     article_embedding=article_embedding,
-                                     article_content=content)
+        story, match = find_or_create_story(title, db, Story, recent_stories,
+                                            article_embedding=article_embedding,
+                                            article_content=content)
+        stories_touched.add(story.id)
 
         # Add new story to recent_stories so subsequent articles
         # in this same batch can match against it
@@ -528,7 +728,8 @@ def store_articles(articles_data, topic_name):
             if classified_topic not in story.topics:
                 story.topics.append(classified_topic)
 
-        scraped_content = scrape_article(url)
+        scrape_result = scrape_article(url, fallback_content=content)
+        scraped_content = scrape_result.content
         if scraped_content:
             # Check if this looks like a duplicate login/error page across the outlet
             is_dup, dup_reason = detect_duplicate_outlet_content(scraped_content, outlet.id)
@@ -537,6 +738,9 @@ def store_articles(articles_data, topic_name):
                 from news_fetcher.scraper import add_to_blocklist
                 add_to_blocklist(url, dup_reason)
                 scraped_content = None
+                scrape_result.content = None
+                scrape_result.status = "blocked"
+                scrape_result.failure_reason = dup_reason
 
         if scraped_content:
             final_content = scraped_content
@@ -560,7 +764,17 @@ def store_articles(articles_data, topic_name):
             fetched_at=datetime.utcnow(),
             bias_score=outlet.bias_score,
             image_url=image_url,
-            embedding=article_embedding
+            embedding=article_embedding,
+            scrape_status=scrape_result.status,
+            scrape_method=truncate_db_string(scrape_result.method, 255),
+            scrape_failure_reason=truncate_db_string(scrape_result.failure_reason, 1024),
+            scrape_http_status=scrape_result.http_status,
+            grouping_match_method=truncate_db_string(getattr(match, "method", None), 32),
+            grouping_confidence=getattr(match, "confidence", None),
+            grouping_candidate_story_ids=serialize_grouping_candidate_ids(
+                getattr(match, "candidate_story_ids", None)
+            ),
+            grouping_needs_review=bool(getattr(match, "needs_review", False)),
         )
 
         db.session.add(new_article)
@@ -584,10 +798,110 @@ def store_articles(articles_data, topic_name):
             # so the UI falls back to story.title (original article title)
             story.headline = None
                 
-        stored += 1
+        metrics["stored"] += 1
+        metrics["scrape_statuses"][scrape_result.status] = (
+            metrics["scrape_statuses"].get(scrape_result.status, 0) + 1
+        )
+        bias_bucket = bias_bucket_for_score(outlet.bias_score)
+        metrics["bias_buckets"][bias_bucket] += 1
+        bias_source = outlet.bias_source or "unrated"
+        metrics["bias_sources"][bias_source] = metrics["bias_sources"].get(bias_source, 0) + 1
 
     db.session.commit()
-    logger.info(f"Stored {stored} new articles for topic: {topic_name}")
+    metrics["stories_touched"] = len(stories_touched)
+    logger.info(
+        "Stored %s new articles for topic: %s (provider=%s, skipped=%s)",
+        metrics["stored"],
+        topic_name,
+        provider or "unknown",
+        metrics["skipped"],
+    )
+    return metrics
+
+
+def review_ambiguous_grouping_matches(review_hours=24, max_articles=75):
+    """
+    Recheck only articles that had an ambiguous first-pass grouping decision.
+    This is intentionally capped and only runs during the full pipeline.
+    """
+    from news_fetcher.story_grouper import find_matching_story_with_metadata
+
+    if not check_ollama_status():
+        logger.info("Ollama offline, skipping ambiguous grouping review.")
+        return {"status": "skipped_no_ollama", "reviewed": 0, "reassigned": 0}
+
+    cutoff = datetime.utcnow() - timedelta(hours=review_hours)
+    articles = Article.query.filter(
+        Article.grouping_needs_review == True,
+        Article.fetched_at >= cutoff,
+    ).order_by(Article.fetched_at.asc()).limit(max_articles).all()
+
+    if not articles:
+        logger.info("No ambiguous grouping matches need review.")
+        return {"status": "ok", "reviewed": 0, "reassigned": 0}
+
+    reviewed = 0
+    reassigned = 0
+
+    for article in articles:
+        reviewed += 1
+        candidate_ids = deserialize_grouping_candidate_ids(article.grouping_candidate_story_ids)
+        candidate_stories = []
+        if candidate_ids:
+            candidate_stories = Story.query.filter(Story.id.in_(candidate_ids)).all()
+        if article.story and all(story.id != article.story_id for story in candidate_stories):
+            candidate_stories.append(article.story)
+
+        if not candidate_stories:
+            article.grouping_needs_review = False
+            article.grouping_reviewed_at = datetime.utcnow()
+            continue
+
+        decision = find_matching_story_with_metadata(
+            article.title,
+            article.embedding,
+            candidate_stories,
+            article_content=article.content,
+        )
+
+        original_story = article.story
+        matched_story = decision.story
+        if matched_story and matched_story.id != article.story_id:
+            logger.info(
+                "  [Grouping Review] Reassigning '%s' from '%s' to '%s'",
+                article.title[:90],
+                original_story.title[:90] if original_story else "no story",
+                matched_story.title[:90],
+            )
+            article.story_id = matched_story.id
+            db.session.flush()
+            reassigned += 1
+
+            for topic in list(original_story.topics) if original_story else []:
+                if topic not in matched_story.topics:
+                    matched_story.topics.append(topic)
+
+            if original_story and not original_story.articles:
+                db.session.delete(original_story)
+
+            if len(matched_story.articles) >= 2:
+                headline = generate_story_headline(matched_story)
+                if headline:
+                    matched_story.headline = headline
+
+        article.grouping_match_method = truncate_db_string(decision.method, 32)
+        article.grouping_confidence = decision.confidence
+        article.grouping_candidate_story_ids = serialize_grouping_candidate_ids(decision.candidate_story_ids)
+        article.grouping_needs_review = False
+        article.grouping_reviewed_at = datetime.utcnow()
+
+    db.session.commit()
+    logger.info(
+        "[Grouping Review] Reviewed %s ambiguous articles, reassigned %s.",
+        reviewed,
+        reassigned,
+    )
+    return {"status": "ok", "reviewed": reviewed, "reassigned": reassigned}
 
 
 def fetch_newsapi(topic_name, mode="top", query=None, country="us", category=None):
@@ -595,7 +909,14 @@ def fetch_newsapi(topic_name, mode="top", query=None, country="us", category=Non
     api_key = os.environ.get("NEWS_API_KEY", "")
     if not api_key:
         logger.warning("NEWS_API_KEY not set, skipping NewsAPI fetch.")
-        return
+        return {
+            "provider": "newsapi",
+            "topic_name": topic_name,
+            "status": "skipped",
+            "reason": "missing_api_key",
+            "input_articles": 0,
+            "stored": 0,
+        }
 
     newsapi = NewsApiClient(api_key=api_key)
 
@@ -641,7 +962,7 @@ def fetch_newsapi(topic_name, mode="top", query=None, country="us", category=Non
                 "image_url":    a.get("urlToImage"),
             })
 
-        store_articles(normalized, topic_name)
+        metrics = store_articles(normalized, topic_name, provider="newsapi")
 
         # Store raw payload
         from aggregator.models import RawArticlePayload
@@ -652,9 +973,20 @@ def fetch_newsapi(topic_name, mode="top", query=None, country="us", category=Non
         )
         db.session.add(raw)
         db.session.commit()
+        metrics["status"] = "ok"
+        return metrics
 
     except Exception as e:
+        db.session.rollback()
         logger.error(f"[NewsAPI] Error fetching {topic_name}: {e}")
+        return {
+            "provider": "newsapi",
+            "topic_name": topic_name,
+            "status": "error",
+            "reason": str(e),
+            "input_articles": 0,
+            "stored": 0,
+        }
 
 
 def fetch_gnews(topic_name, query=None, category=None):
@@ -662,7 +994,14 @@ def fetch_gnews(topic_name, query=None, category=None):
     api_key = os.environ.get("GNEWS_API_KEY", "")
     if not api_key:
         logger.warning("GNEWS_API_KEY not set, skipping GNews fetch.")
-        return
+        return {
+            "provider": "gnews",
+            "topic_name": topic_name,
+            "status": "skipped",
+            "reason": "missing_api_key",
+            "input_articles": 0,
+            "stored": 0,
+        }
 
     try:
         if query:
@@ -721,7 +1060,7 @@ def fetch_gnews(topic_name, query=None, category=None):
                 "image_url":    a.get("image"),
             })
 
-        store_articles(normalized, topic_name)
+        metrics = store_articles(normalized, topic_name, provider="gnews")
 
         # Store raw payload
         from aggregator.models import RawArticlePayload
@@ -732,9 +1071,20 @@ def fetch_gnews(topic_name, query=None, category=None):
         )
         db.session.add(raw)
         db.session.commit()
+        metrics["status"] = "ok"
+        return metrics
 
     except Exception as e:
+        db.session.rollback()
         logger.error(f"[GNews] Error fetching {topic_name}: {e}")
+        return {
+            "provider": "gnews",
+            "topic_name": topic_name,
+            "status": "error",
+            "reason": str(e),
+            "input_articles": 0,
+            "stored": 0,
+        }
     
 
 def regroup_ungrouped_stories():
@@ -898,6 +1248,8 @@ def audit_existing_scrapes(batch_size=200):
         # If domain was already flagged this run, just clear the content
         if domain and domain in auto_blocked:
             article.content = None
+            article.scrape_status = "blocked"
+            article.scrape_failure_reason = "domain_auto_blocked_same_audit_run"
             cleared += 1
             continue
 
@@ -906,6 +1258,8 @@ def audit_existing_scrapes(batch_size=200):
         if is_bad:
             logger.info(f"  [Audit] Bad scrape detected: {article.title[:60]} — {reason}")
             article.content = None
+            article.scrape_status = "blocked"
+            article.scrape_failure_reason = reason
             cleared += 1
             if domain:
                 add_to_blocklist(article.url, reason)
@@ -919,6 +1273,8 @@ def audit_existing_scrapes(batch_size=200):
         if is_dup:
             logger.info(f"  [Audit] Duplicate scrape detected: {article.title[:60]} — {dup_reason}")
             article.content = None
+            article.scrape_status = "blocked"
+            article.scrape_failure_reason = dup_reason
             cleared += 1
             if domain:
                 add_to_blocklist(article.url, dup_reason)
@@ -1210,10 +1566,17 @@ def fetch_and_store_articles(topic_name, mode="top", query=None,
     """
     Main entry point. Fetches from both NewsAPI and GNews for a given topic.
     """
-    fetch_newsapi(topic_name, mode=mode, query=query,
-                  country=country, category=category)
-    fetch_gnews(topic_name, query=gnews_query, category=gnews_category)
+    newsapi_metrics = fetch_newsapi(topic_name, mode=mode, query=query,
+                                    country=country, category=category)
+    gnews_metrics = fetch_gnews(topic_name, query=gnews_query, category=gnews_category)
     cleanup_old_payloads()
+    return {
+        "topic_name": topic_name,
+        "providers": {
+            "newsapi": newsapi_metrics,
+            "gnews": gnews_metrics,
+        },
+    }
 
 
 def process_current_edition():
@@ -1233,14 +1596,43 @@ def process_current_edition():
 
     if not check_ollama_status():
         logger.info("[Processor] Ollama offline, skipping edition processing.")
-        return
+        return {
+            "status": "skipped_no_ollama",
+            "stories_seen": 0,
+            "story_summaries_generated": 0,
+            "deep_reports_generated": 0,
+            "child_article_summaries_generated": 0,
+            "child_article_analyses_generated": 0,
+            "stale_stories_reset": 0,
+            "stable_stories_skipped": 0,
+        }
 
     latest_edition = Edition.query.order_by(Edition.created_at.desc()).first()
     if not latest_edition:
         logger.info("[Processor] No edition found to process.")
-        return
+        return {
+            "status": "skipped_no_edition",
+            "stories_seen": 0,
+            "story_summaries_generated": 0,
+            "deep_reports_generated": 0,
+            "child_article_summaries_generated": 0,
+            "child_article_analyses_generated": 0,
+            "stale_stories_reset": 0,
+            "stable_stories_skipped": 0,
+        }
 
     stories = [es.story for es in latest_edition.edition_stories.order_by(EditionStory.rank).all()]
+    metrics = {
+        "status": "processed",
+        "edition_id": latest_edition.id,
+        "stories_seen": len(stories),
+        "story_summaries_generated": 0,
+        "deep_reports_generated": 0,
+        "child_article_summaries_generated": 0,
+        "child_article_analyses_generated": 0,
+        "stale_stories_reset": 0,
+        "stable_stories_skipped": 0,
+    }
     
     logger.info(f"[Processor] Processing {len(stories)} stories from {latest_edition.edition_type} edition...")
 
@@ -1252,9 +1644,10 @@ def process_current_edition():
             continue
 
         try:
+            story_is_stale = False
+
             # Check if analysis is stale — enough new articles arrived
             # since the last time this story was summarized
-            is_stale = False
             if story.summary_generated_at and article_count >= 2:
                 new_article_count = sum(
                     1 for a in story.articles
@@ -1267,7 +1660,22 @@ def process_current_edition():
                     )
                     story.summary = None
                     story.deep_report = None
-                    is_stale = True
+                    story_is_stale = True
+                    metrics["stale_stories_reset"] += 1
+
+            if article_count >= 2:
+                story_outputs_ready = bool(story.summary) and bool(story.deep_report)
+            else:
+                story_outputs_ready = bool(story.summary)
+
+            missing_child_summaries = any(
+                article.content and not article.summary
+                for article in story.articles
+            )
+
+            if not story_is_stale and story_outputs_ready and not missing_child_summaries:
+                metrics["stable_stories_skipped"] += 1
+                continue
 
             # 1. Process Story-level Summaries
             if article_count >= 2:
@@ -1276,15 +1684,18 @@ def process_current_edition():
                     if summary:
                         story.summary = summary
                         story.summary_generated_at = datetime.utcnow()
+                        metrics["story_summaries_generated"] += 1
                         logger.info(f"  [Processor] Story summary: {story.title[:60]}")
 
                 if not story.deep_report:
                     report = generate_deep_report(story)
                     if report:
                         story.deep_report = report
+                        metrics["deep_reports_generated"] += 1
                         logger.info(f"  [Processor] Deep report: {story.title[:60]}")
             else:
                 # Single-article story: Ensure story summary exists
+                story.headline = None
                 if not story.summary:
                     art = story.articles[0]
                     summary = art.summary or summarize_article(art)
@@ -1292,6 +1703,7 @@ def process_current_edition():
                         art.summary = summary
                         story.summary = summary
                         story.summary_generated_at = datetime.utcnow()
+                        metrics["story_summaries_generated"] += 1
                         logger.info(f"  [Processor] Single-source summary: {story.title[:60]}")
 
                 # Ensure old stories that once had multiple articles (and thus a deep_report)
@@ -1305,8 +1717,8 @@ def process_current_edition():
                     summary = summarize_article(article)
                     if summary:
                         article.summary = summary
+                        metrics["child_article_summaries_generated"] += 1
                         logger.info(f"    [Processor] Child article summary: {article.title[:60]}")
-
             db.session.commit()
 
         except Exception as e:
@@ -1314,6 +1726,7 @@ def process_current_edition():
             db.session.rollback()
 
     logger.info("[Processor] Current edition processing complete.")
+    return metrics
 
 
 def sync_allsides_ratings():
@@ -1393,7 +1806,13 @@ def publish_edition():
     existing = Edition.query.filter_by(date=today, edition_type=edition_type).first()
     if existing:
         logger.info(f"[Edition] {edition_type} edition for {today} already published, skipping.")
-        return
+        return {
+            "status": "skipped_existing",
+            "edition_id": existing.id,
+            "date": str(today),
+            "edition_type": edition_type,
+            "story_count": existing.edition_stories.count(),
+        }
 
     # Look back across all editions published in the last 24 hours
     recent_cutoff = datetime.utcnow() - timedelta(hours=24)
@@ -1425,7 +1844,11 @@ def publish_edition():
         s for s in candidates
         if not (
             len(s.articles) == 1 and
-            not (s.articles[0].content or '').strip()
+            (
+                not (s.articles[0].content or '').strip() or
+                is_generic_roundup_title(s.title) or
+                is_generic_roundup_title(s.articles[0].title)
+            )
         )
     ]
 
@@ -1440,7 +1863,7 @@ def publish_edition():
 
         if story.id not in prev_story_ids:
             # New story not in previous edition
-            eligible.append(story)
+            eligible.append((story, False))
         elif prev_published_at:
             # Story was in previous edition — only include if new articles arrived
             new_articles = [
@@ -1448,15 +1871,19 @@ def publish_edition():
                 if a.fetched_at and a.fetched_at > prev_published_at
             ]
             if new_articles:
-                eligible.append(story)
+                eligible.append((story, True))
             else:
-                carried.append(story)
+                carried.append((story, False))
 
     # Fill to 20 with carried-over stories if needed.
     # Only carry stories that are less than 48 hours old to prevent
     # ancient high-scored stories from recycling indefinitely.
     carry_cutoff = datetime.utcnow() - timedelta(hours=48)
-    fresh_carried = [s for s in carried if s.created_at >= carry_cutoff]
+    fresh_carried = [
+        (story, has_updates)
+        for story, has_updates in carried
+        if story.created_at >= carry_cutoff
+    ]
     if len(eligible) < 20:
         slots_left = 20 - len(eligible)
         eligible.extend(fresh_carried[:slots_left])
@@ -1465,34 +1892,70 @@ def publish_edition():
     # regardless of how eligible was built
     seen = set()
     deduped = []
-    for s in eligible:
-        if s.id not in seen:
-            seen.add(s.id)
-            deduped.append(s)
-    top_20 = deduped[:20]
+    for story, has_updates in eligible:
+        if story.id not in seen:
+            seen.add(story.id)
+            deduped.append((story, has_updates))
+    top_20 = []
+    dedupe_skip_count = 0
+    for story, has_updates in deduped:
+        if any(stories_look_duplicate_for_edition(story, kept_story) for kept_story, _ in top_20):
+            dedupe_skip_count += 1
+            logger.info(
+                "[Edition] Skipping same-event duplicate candidate: %s",
+                story.title[:100],
+            )
+            continue
+        top_20.append((story, has_updates))
+        if len(top_20) >= 20:
+            break
 
     if not top_20:
         logger.warning(f"[Edition] No stories available for {edition_type} edition on {today}.")
-        return
+        return {
+            "status": "empty",
+            "date": str(today),
+            "edition_type": edition_type,
+            "story_count": 0,
+        }
 
     edition = Edition(date=today, edition_type=edition_type)
     db.session.add(edition)
     db.session.flush()
 
-    for rank, story in enumerate(top_20, 1):
+    updated_repeat_count = 0
+    carryover_count = 0
+    for rank, (story, has_updates) in enumerate(top_20, 1):
+        if has_updates:
+            updated_repeat_count += 1
+        elif story.id in prev_story_ids:
+            carryover_count += 1
         es = EditionStory(
             edition_id=edition.id,
             story_id=story.id,
             rank=rank,
-            headline_score_at_publish=story.headline_score
+            headline_score_at_publish=story.headline_score,
+            has_updates=has_updates,
         )
         db.session.add(es)
 
     db.session.commit()
     logger.info(
         f"[Edition] Published {edition_type} edition for {today} "
-        f"with {len(top_20)} stories ({len(eligible) - len(top_20[:len(eligible)])} carried over)."
+        f"with {len(top_20)} stories ({carryover_count} unchanged carry-overs, "
+        f"{updated_repeat_count} repeated stories with new updates, "
+        f"{dedupe_skip_count} same-event candidates skipped)."
     )
+    return {
+        "status": "published",
+        "edition_id": edition.id,
+        "date": str(today),
+        "edition_type": edition_type,
+        "story_count": len(top_20),
+        "carryover_count": carryover_count,
+        "updated_repeat_count": updated_repeat_count,
+        "dedupe_skip_count": dedupe_skip_count,
+    }
 
 
 if __name__ == "__main__":

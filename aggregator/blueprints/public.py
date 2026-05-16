@@ -34,6 +34,31 @@ def apply_aggregator_filter(story):
     if not has_good_original:
         story.display_articles.sort(key=lambda x: x.date or dt.min, reverse=True)
 
+    status_counts = {
+        "success": 0,
+        "fallback": 0,
+        "blocked": 0,
+    }
+    for article in story.display_articles:
+        status = (article.scrape_status or "blocked").lower()
+        if status == "success":
+            status_counts["success"] += 1
+        elif status == "fallback":
+            status_counts["fallback"] += 1
+        else:
+            status_counts["blocked"] += 1
+
+    total_articles = len(story.display_articles)
+    readable_articles = status_counts["success"] + status_counts["fallback"]
+    story.scrape_quality = {
+        "total": total_articles,
+        "success": status_counts["success"],
+        "fallback": status_counts["fallback"],
+        "blocked": status_counts["blocked"],
+        "readable_pct": round((readable_articles / total_articles) * 100) if total_articles else 0,
+        "full_pct": round((status_counts["success"] / total_articles) * 100) if total_articles else 0,
+    }
+
 
 def check_ollama_status():
     ollama_host = os.environ.get("OLLAMA_HOST", "")

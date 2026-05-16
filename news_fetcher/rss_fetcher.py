@@ -3,6 +3,7 @@
 import feedparser
 import logging
 from datetime import datetime
+from news_fetcher.fetch_and_store_articles import merge_count_maps
 
 logger = logging.getLogger(__name__)
 
@@ -117,11 +118,49 @@ def fetch_and_store_rss():
 
     logger.info("=== RSS fetch starting ===")
     total = 0
+    metrics = {
+        "provider": "rss",
+        "status": "ok",
+        "feeds_attempted": len(RSS_FEEDS),
+        "feeds_with_articles": 0,
+        "input_articles": 0,
+        "stored": 0,
+        "new_outlets": 0,
+        "stories_touched": 0,
+        "skipped": {},
+        "scrape_statuses": {},
+        "bias_buckets": {},
+        "bias_sources": {},
+        "per_feed": [],
+    }
 
     for feed_url in RSS_FEEDS:
         source_name, articles = fetch_feed(feed_url)
         if articles:
-            store_articles(articles, "Global News")
+            feed_metrics = store_articles(articles, "Global News", provider="rss")
+            metrics["feeds_with_articles"] += 1
+            metrics["input_articles"] += feed_metrics.get("input_articles", 0)
+            metrics["stored"] += feed_metrics.get("stored", 0)
+            metrics["new_outlets"] += feed_metrics.get("new_outlets", 0)
+            metrics["stories_touched"] += feed_metrics.get("stories_touched", 0)
+            merge_count_maps(metrics["skipped"], feed_metrics.get("skipped"))
+            merge_count_maps(metrics["scrape_statuses"], feed_metrics.get("scrape_statuses"))
+            merge_count_maps(metrics["bias_buckets"], feed_metrics.get("bias_buckets"))
+            merge_count_maps(metrics["bias_sources"], feed_metrics.get("bias_sources"))
+            metrics["per_feed"].append({
+                "feed_url": feed_url,
+                "source_name": source_name,
+                "input_articles": feed_metrics.get("input_articles", 0),
+                "stored": feed_metrics.get("stored", 0),
+            })
             total += len(articles)
+        else:
+            metrics["per_feed"].append({
+                "feed_url": feed_url,
+                "source_name": source_name,
+                "input_articles": 0,
+                "stored": 0,
+            })
 
     logger.info(f"=== RSS fetch complete. Processed {total} articles. ===")
+    return metrics

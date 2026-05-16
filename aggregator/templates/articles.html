@@ -38,11 +38,11 @@
         [data-theme="dark"] {
             --bg:            #0f0f17;
             --surface:       #1a1a26;
-            --sidebar-bg:    #111120;
+            --sidebar-bg:    #030308;
             --sidebar-text:  #cdd6f4;
             --sidebar-muted: #666;
             --sidebar-hover: #ffffff;
-            --sidebar-active-bg: #2a2a3e;
+            --sidebar-active-bg: #121220;
             --text:          #e2e8f0;
             --text-muted:    #a0aec0;
             --text-faint:    #718096;
@@ -81,11 +81,15 @@
             position: sticky;
             top: 0;
             height: 100vh;
-            overflow-y: auto;
+            overflow: hidden;
             box-shadow: 4px 0 16px rgba(0, 0, 0, 0.2);
             z-index: 10;
             transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            scrollbar-width: none;
+            border-right: 1px solid rgba(255, 255, 255, 0.06);
         }
+
+        .sidebar::-webkit-scrollbar { display: none; }
 
         .sidebar.collapsed {
             width: 68px;
@@ -95,10 +99,21 @@
         .sidebar-inner {
             display: flex;
             flex-direction: column;
-            min-height: 100%;
+            flex: 1;
+            height: 100%;
+            min-height: 0;
             padding: 24px 0;
             overflow-x: hidden;
         }
+
+        .sidebar-content {
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            scrollbar-width: none;
+        }
+
+        .sidebar-content::-webkit-scrollbar { display: none; }
 
         .sidebar h2 {
             font-size: 11px;
@@ -172,6 +187,8 @@
             display: flex;
             flex-direction: column;
             gap: 12px;
+            background: var(--sidebar-bg);
+            flex-shrink: 0;
         }
         
         .sidebar.collapsed .sidebar-footer { padding: 16px 0; align-items: center; }
@@ -206,6 +223,7 @@
             cursor: pointer;
             padding: 12px;
             align-self: flex-end;
+            flex-shrink: 0;
             margin-right: 12px;
             font-size: 18px;
             border-radius: 8px;
@@ -390,6 +408,20 @@
 
         .hint { font-size: 12px; color: var(--text-faint); margin-bottom: 32px; margin-left: 4px; }
 
+        .search-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .clear-search {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--accent);
+            text-decoration: none;
+        }
+
         /* ── Story cards ── */
         .story {
             background: var(--surface);
@@ -541,6 +573,38 @@
         .full-text-link:hover { text-decoration: underline; }
 
         .outlet-name { color: var(--text-muted); font-size: 13px; font-weight: 500; }
+        .scrape-meta {
+            flex-basis: 100%;
+            margin-top: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+        .scrape-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 8px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: rgba(0,0,0,0.03);
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+        .scrape-chip.scrape-success { color: #1d6f42; border-color: rgba(29,111,66,0.25); background: rgba(29,111,66,0.08); }
+        .scrape-chip.scrape-fallback { color: #8a5a00; border-color: rgba(138,90,0,0.25); background: rgba(138,90,0,0.09); }
+        .scrape-chip.scrape-blocked,
+        .scrape-chip.scrape-failed { color: #a33636; border-color: rgba(163,54,54,0.25); background: rgba(163,54,54,0.08); }
+        .scrape-chip.scrape-skipped { color: #666; border-color: rgba(102,102,102,0.25); background: rgba(102,102,102,0.08); }
+        .scrape-detail {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 10px;
+            color: var(--text-faint);
+        }
 
         .bias-tag {
             display: inline-block;
@@ -592,6 +656,41 @@
             color: var(--text-muted);
         }
 
+        .scrape-filter-row {
+            margin-bottom: 22px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .scrape-filter-label {
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-faint);
+        }
+
+        .scrape-filter-link {
+            display: inline-flex;
+            align-items: center;
+            padding: 6px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .scrape-filter-link.active {
+            color: var(--text);
+            border-color: var(--accent);
+            box-shadow: 0 0 0 1px rgba(164, 60, 181, 0.15) inset;
+        }
+
         @media (max-width: 900px) {
             .story-layout { flex-direction: column; }
             .story-image { width: 100%; height: 200px; min-width: unset; }
@@ -607,30 +706,38 @@
         <button class="sidebar-toggle-btn" id="sidebar-toggle" onclick="toggleSidebar()">«</button>
         
         <div class="sidebar-inner">
-            <div class="topic-block {% if not active_label and not is_multi_view %}active{% endif %}">
-                <a href="{{ url_for('admin.list_articles') }}">
-                    <span class="full-text">All Stories</span>
-                    <span class="icon-text">ALL</span>
-                </a>
-            </div>
-            <div class="topic-block {% if is_multi_view %}active{% endif %}">
-                <a href="{{ url_for('admin.multi_article_stories') }}">
-                    <span class="full-text">Grouped Stories</span>
-                    <span class="icon-text">GRP</span>
-                </a>
-            </div>
-            <hr class="sidebar-divider">
-            
-            <h2>Topics</h2>
+            <div class="sidebar-content">
+                <div class="topic-block {% if not active_label and not is_multi_view %}active{% endif %}">
+                    <a href="{{ url_for('admin.list_articles', scrape_status=active_scrape_status, show_single=show_single|string|lower, q=active_search_query or '') }}">
+                        <span class="full-text">All Stories</span>
+                        <span class="icon-text">ALL</span>
+                    </a>
+                </div>
+                <div class="topic-block {% if is_multi_view %}active{% endif %}">
+                    <a href="{{ url_for('admin.multi_article_stories', topic=active_label, scrape_status=active_scrape_status, q=active_search_query or '') }}">
+                        <span class="full-text">Grouped Stories</span>
+                        <span class="icon-text">GRP</span>
+                    </a>
+                </div>
+                <div class="topic-block">
+                    <a href="{{ url_for('admin.fetch_page') }}">
+                        <span class="full-text">Fetch Articles</span>
+                        <span class="icon-text">GET</span>
+                    </a>
+                </div>
+                <hr class="sidebar-divider">
+                
+                <h2>Topics</h2>
 
-            {% for topic in topics %}
-            <div class="topic-block {% if active_label == topic.label %}active{% endif %}">
-                <a href="{{ url_for('admin.list_articles', topic=topic.label) }}">
-                    <span class="full-text">{{ topic.label }}</span>
-                    <span class="icon-text">{{ topic.label[0] }}</span>
-                </a>
+                {% for topic in topics %}
+                <div class="topic-block {% if active_label == topic.label %}active{% endif %}">
+                    <a href="{{ url_for('admin.list_articles', topic=topic.label, scrape_status=active_scrape_status, show_single=show_single|string|lower, q=active_search_query or '') }}">
+                        <span class="full-text">{{ topic.label }}</span>
+                        <span class="icon-text">{{ topic.label[0] }}</span>
+                    </a>
+                </div>
+                {% endfor %}
             </div>
-            {% endfor %}
 
             <div class="sidebar-footer">
                 <div class="ollama-status">
@@ -653,14 +760,17 @@
                     <div class="action-dropdown" id="action-dropdown">
                         <form method="POST" action="{{ url_for('admin.wake_ollama') }}">
                             <input type="hidden" name="label" value="{{ active_label or '' }}">
+                            <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
                             <button type="submit" class="menu-item">⚡ Wake Ollama</button>
                         </form>
                         <form method="POST" action="{{ url_for('admin.ollama_catchup_route') }}">
                             <input type="hidden" name="label" value="{{ active_label or '' }}">
+                            <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
                             <button type="submit" class="menu-item">↻ Ollama Catchup</button>
                         </form>
                         <form method="POST" action="{{ url_for('admin.scrape_all_missing') }}">
                             <input type="hidden" name="label" value="{{ active_label or '' }}">
+                            <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
                             <button type="submit" class="menu-item">↻ Scrape Missing</button>
                         </form>
                         
@@ -668,19 +778,23 @@
                         
                         <form method="POST" action="{{ url_for('admin.force_regroup') }}">
                             <input type="hidden" name="label" value="{{ active_label or '' }}">
+                            <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
                             <button type="submit" class="menu-item">⚡ Force Re-group</button>
                         </form>
                         <form method="POST" action="{{ url_for('admin.force_resummarize') }}">
                             <input type="hidden" name="label" value="{{ active_label or '' }}">
+                            <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
                             <button type="submit" class="menu-item">⚡ Force Re-summarize</button>
                         </form>
                         <form method="POST" action="{{ url_for('admin.reclassify_articles') }}">
                             <input type="hidden" name="label" value="{{ active_label or '' }}">
+                            <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
                             <button type="submit" class="menu-item">↻ Reclassify Topics</button>
                         </form>
 
                         <form method="POST" action="{{ url_for('admin.sync_allsides') }}">
                             <input type="hidden" name="label" value="{{ active_label or '' }}">
+                            <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
                             <button type="submit" class="menu-item">🟢 Sync AllSides Ratings</button>
                         </form>
 
@@ -705,17 +819,34 @@
             <span class="active-topic-label">{{ active_label }}</span>
         {% endif %}
 
-        <form method="POST" action="{{ url_for('admin.fetch_articles') }}" class="search-bar">
-            <input type="hidden" name="mode" value="query">
-            <input type="text" name="query" placeholder="Search a topic e.g. climate, AI ...">
-            <button type="submit">Fetch Articles</button>
+        <form method="GET" action="{{ url_for('admin.list_articles') }}" class="search-bar">
+            <input type="hidden" name="topic" value="{{ active_label or '' }}">
+            <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
+            <input type="hidden" name="show_single" value="{{ show_single|string|lower }}">
+            <input type="text" name="q" value="{{ active_search_query or '' }}" placeholder="Search stories, articles, outlets, summaries...">
+            <div class="search-actions">
+                <button type="submit">Search</button>
+                {% if active_search_query %}
+                <a href="{{ url_for('admin.list_articles', topic=active_label, scrape_status=active_scrape_status, show_single=show_single|string|lower) }}" class="clear-search">Clear</a>
+                {% endif %}
+            </div>
         </form>
-        <p class="hint">Search for news, or browse topics in the sidebar</p>
+        <p class="hint">Search your existing stories and articles, or open Fetch Articles from the sidebar to pull in new coverage.</p>
+
+        <div class="scrape-filter-row">
+            <span class="scrape-filter-label">Scrape Filter</span>
+            <a href="{{ url_for('admin.list_articles', topic=active_label, show_single=show_single|string|lower, q=active_search_query or '') }}"
+               class="scrape-filter-link {% if not active_scrape_status %}active{% endif %}">All</a>
+            {% for status in scrape_status_filters %}
+                <a href="{{ url_for('admin.list_articles', topic=active_label, scrape_status=status, show_single=show_single|string|lower, q=active_search_query or '') }}"
+                   class="scrape-filter-link {% if active_scrape_status == status %}active{% endif %}">{{ status }}</a>
+            {% endfor %}
+        </div>
 
         {% if not is_multi_view %}
         <div style="margin-bottom: 24px; display: flex; align-items: center; gap: 10px; margin-left: 4px;">
             <span style="font-size: 13px; font-weight: 600; color: var(--text-muted);">Show single-article stories:</span>
-            <a href="{{ url_for('admin.list_articles', topic=active_label, show_single='false' if show_single else 'true', page=1) }}"
+            <a href="{{ url_for('admin.list_articles', topic=active_label, scrape_status=active_scrape_status, show_single='false' if show_single else 'true', page=1, q=active_search_query or '') }}"
                style="font-size: 13px; font-weight: 700; color: var(--accent); text-decoration: none;">
                 {{ '✓ ON' if show_single else '✗ OFF' }}
             </a>
@@ -851,6 +982,7 @@
                                         <span class="article-actions">
                                             <form method="POST" action="{{ url_for('admin.summarize_article_route', article_id=article.id) }}">
                                                 <input type="hidden" name="label" value="{{ active_label or '' }}">
+                                                <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
                                                 <button type="submit" class="btn btn-muted"
                                                     title="AI Summary">
                                                     {{ '↻' if article.summary else '✦' }} Summary
@@ -858,12 +990,41 @@
                                             </form>
                                             <form method="POST" action="{{ url_for('admin.rate_article', article_id=article.id) }}">
                                                 <input type="hidden" name="label" value="{{ active_label or '' }}">
+                                                <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
                                                 <button type="submit" class="btn btn-orange"
                                                     title="Rate Bias">
                                                     ✦ Bias
                                                 </button>
                                             </form>
                                         </span>
+
+                                        <div class="scrape-meta">
+                                            {% set scrape_status = article.scrape_status or 'pending' %}
+                                            <span class="scrape-chip scrape-{{ scrape_status }}">
+                                                {% if scrape_status == 'success' %}
+                                                    Scrape OK
+                                                {% elif scrape_status == 'fallback' %}
+                                                    Fallback Used
+                                                {% elif scrape_status == 'blocked' %}
+                                                    Blocked
+                                                {% elif scrape_status == 'skipped' %}
+                                                    Skipped
+                                                {% elif scrape_status == 'failed' %}
+                                                    Failed
+                                                {% else %}
+                                                    Pending
+                                                {% endif %}
+                                            </span>
+                                            {% if article.scrape_method %}
+                                                <span class="scrape-detail">method={{ article.scrape_method }}</span>
+                                            {% endif %}
+                                            {% if article.scrape_http_status %}
+                                                <span class="scrape-detail">http={{ article.scrape_http_status }}</span>
+                                            {% endif %}
+                                            {% if article.scrape_failure_reason %}
+                                                <span class="scrape-detail" title="{{ article.scrape_failure_reason }}">{{ article.scrape_failure_reason[:90] }}{% if article.scrape_failure_reason|length > 90 %}...{% endif %}</span>
+                                            {% endif %}
+                                        </div>
                                     </div>
                                 </li>
                                 {% endfor %}
@@ -882,13 +1043,13 @@
         {% if total_pages > 1 %}
         <div class="pagination">
             {% if page > 1 %}
-                <a href="{{ url_for('admin.list_articles', topic=active_label, show_single=show_single|string|lower, page=page-1) }}" class="page-btn">← PREVIOUS</a>
+                <a href="{{ url_for('admin.list_articles', topic=active_label, scrape_status=active_scrape_status, show_single=show_single|string|lower, page=page-1, q=active_search_query or '') }}" class="page-btn">← PREVIOUS</a>
             {% endif %}
 
             <span class="page-info">PAGE {{ page }} OF {{ total_pages }}</span>
 
             {% if page < total_pages %}
-                <a href="{{ url_for('admin.list_articles', topic=active_label, show_single=show_single|string|lower, page=page+1) }}" class="page-btn">NEXT →</a>
+                <a href="{{ url_for('admin.list_articles', topic=active_label, scrape_status=active_scrape_status, show_single=show_single|string|lower, page=page+1, q=active_search_query or '') }}" class="page-btn">NEXT →</a>
             {% endif %}
         </div>
         {% endif %}

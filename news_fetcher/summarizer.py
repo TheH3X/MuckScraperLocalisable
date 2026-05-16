@@ -85,6 +85,11 @@ def get_persona(analysis_type):
     return mapping.get(analysis_type, mapping['default'])
 
 
+def article_needs_deep_analysis(article):
+    """Only generate article-level deep analysis for domains where it adds value."""
+    return detect_analysis_type(article) in {"politics", "science", "business"}
+
+
 @observe()
 def summarize_story(story):
     """
@@ -114,33 +119,23 @@ def summarize_story(story):
 
     combined = "\n\n".join(article_texts)
 
-    prompt = f"""You are a {persona} writing in the Smart Brevity style.
+    prompt = f"""You are a {persona} writing an executive summary for a news briefing.
 
-Below are multiple news articles covering the same story. Write a structured summary using EXACTLY this format:
-
-The big picture: [One punchy, direct sentence summarizing what happened. No fluff.]
-
-Why it matters: [1-2 sentences explaining the significance.]
-
-What's happening:
-- [Key fact or development]
-- [Key fact or development]
-- [Key fact or development]
-- [Add more bullets if needed, max 6]
-
-What's next: [One sentence on what to watch for or what comes next.]
+Below are multiple news articles covering the same story. Write a concise executive summary.
 
 Rules:
-- Use EXACTLY the labels shown above including the colon
-- Bullets must start with • 
-- Keep every section tight and direct
-- No markdown, no extra formatting, no commentary
-- Do not add any text before or after the structure above
+- Write exactly one short paragraph
+- Use 3 to 5 sentences
+- Explain what happened, why it matters, and the most important current development
+- No bullet points
+- No section labels
+- No markdown or prefatory text
+- Keep it sharp and readable for a front-page briefing
 
 Articles:
 {combined}
 
-Detailed Summary:"""
+Executive Summary:"""
 
     langfuse_context.update_current_observation(
         input=prompt,
@@ -438,7 +433,7 @@ Rules:
 @observe()
 def summarize_article(article):
     """
-    Generate a Smart Brevity summary for a single article using a 
+    Generate a concise Smart Brevity briefing for a single article using a
     specialized journalist persona.
     Used for the per-article summary button in the article reader.
     Returns summary string or None if Ollama is unavailable.
@@ -456,26 +451,24 @@ def summarize_article(article):
     if not clean_content:
         return None
 
-    prompt = f"""You are a {persona} writing in the Smart Brevity style.
+    prompt = f"""You are a {persona} writing a tight Smart Brevity-style article briefing.
 
-Below is a news article. Write a structured summary using EXACTLY this format:
+Below is a news article. Write a concise briefing using EXACTLY this format:
 
-The big picture: [One punchy, direct sentence summarizing what happened. No fluff.]
+The big picture: [One direct sentence on what happened.]
 
-Why it matters: [1-2 sentences explaining the significance.]
+Why it matters: [1-2 short sentences on why this story matters.]
 
-What's happening:
-- [Key fact or development]
-- [Key fact or development]
-- [Key fact or development]
-- [Add more bullets if needed, max 6]
+Quick analysis: [1-2 short sentences on the framing, tension, consequence, uncertainty, or what stands out most.]
 
-What's next: [One sentence on what to watch for or what comes next.]
+What's next: [One sentence on what to watch for next.]
 
 Rules:
 - Use EXACTLY the labels shown above including the colon
-- Bullets must start with •
-- Keep every section tight and direct
+- No bullets
+- Keep the full response to 4 short sections only
+- Be concrete, not generic
+- Do not repeat the same idea in multiple sections
 - No markdown, no extra formatting, no commentary
 - Do not add any text before or after the structure above
 
@@ -511,4 +504,127 @@ Summary:"""
         return None
     except Exception as e:
         logger.error(f"  Error generating summary for article '{article.title}': {e}")
+        return None
+
+
+@observe()
+def generate_article_deep_analysis(article):
+    """
+    Generate a deeper article-level analysis for topics that benefit from it.
+    Returns analysis string or None if this topic should only receive a summary.
+    """
+    if not article or not article.content or not article_needs_deep_analysis(article):
+        return None
+
+    if not check_ollama_status():
+        return None
+
+    analysis_type = detect_analysis_type(article)
+    clean_content = strip_html(article.content)[:3500].strip()
+    if not clean_content:
+        return None
+
+    if analysis_type == "politics":
+        prompt = f"""You are a political analyst writing a focused article analysis.
+
+Analyze this political article using EXACTLY this format:
+
+Core argument: [2-3 sentences summarizing the article's main thesis and factual basis]
+
+How it frames the issue: [What assumptions, emphasis, or political framing the piece uses]
+
+What evidence it relies on: [The main facts, sources, or claims used to support the argument]
+
+What to question or watch: [Potential blind spots, unresolved questions, or what future reporting should clarify]
+
+Rules:
+- Use EXACTLY the labels shown above including the colon
+- Stay analytical, not partisan
+- No markdown, no extra formatting
+- Do not add any text before or after the structure above
+
+Article title: {article.title}
+
+Article content:
+{clean_content}
+
+Analysis:"""
+    elif analysis_type == "science":
+        prompt = f"""You are a science and technology journalist writing a technical analysis.
+
+Analyze this article using EXACTLY this format:
+
+What the article says: [2-3 sentences summarizing the core finding or development]
+
+Technical substance: [The key mechanism, data, or technical concept explained in the article]
+
+Why this matters: [What the development changes in practical or scientific terms]
+
+What remains uncertain: [Limitations, caveats, unanswered questions, or hype risk]
+
+Rules:
+- Use EXACTLY the labels shown above including the colon
+- Prioritize clarity and technical accuracy
+- No markdown, no extra formatting
+- Do not add any text before or after the structure above
+
+Article title: {article.title}
+
+Article content:
+{clean_content}
+
+Analysis:"""
+    elif analysis_type == "business":
+        prompt = f"""You are a financial journalist writing a markets and business analysis.
+
+Analyze this article using EXACTLY this format:
+
+What happened: [2-3 sentences summarizing the business or market event]
+
+What is driving it: [The main financial, operational, or policy factors behind it]
+
+Who is affected: [The companies, sectors, investors, or consumers most affected]
+
+What to watch next: [Risks, catalysts, or decision points that matter going forward]
+
+Rules:
+- Use EXACTLY the labels shown above including the colon
+- Focus on economic significance, not fluff
+- No markdown, no extra formatting
+- Do not add any text before or after the structure above
+
+Article title: {article.title}
+
+Article content:
+{clean_content}
+
+Analysis:"""
+    else:
+        return None
+
+    langfuse_context.update_current_observation(
+        input=prompt,
+        metadata={"model": MODEL, "analysis_type": analysis_type, "scope": "article_deep_analysis"}
+    )
+
+    try:
+        response = requests.post(
+            f"{OLLAMA_HOST}/api/generate",
+            json={
+                "model": MODEL,
+                "prompt": prompt,
+                "stream": False,
+            },
+            timeout=150,
+        )
+        response.raise_for_status()
+        result = response.json()
+        analysis = result.get("response", "").strip()
+        langfuse_context.update_current_observation(output=analysis)
+        if analysis:
+            logger.info(f"  Generated {analysis_type} article analysis: {article.title[:60]}...")
+            return analysis
+        return None
+    except Exception as e:
+        logger.error(f"  Error generating deep analysis for article '{article.title}': {e}")
         return None

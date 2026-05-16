@@ -9,6 +9,10 @@ import os
 import logging
 from difflib import SequenceMatcher
 import re
+import json
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from urllib.parse import urljoin, urlparse, urlunparse, parse_qsl, urlencode
 logger = logging.getLogger(__name__)
 
 HEADERS_DEFAULT = {
@@ -94,6 +98,27 @@ WEAK_BAD_SCRAPE_INDICATORS = [
     "premium content",
 ]
 
+SCRAPE_STATUS_SUCCESS = "success"
+SCRAPE_STATUS_FALLBACK = "fallback"
+SCRAPE_STATUS_BLOCKED = "blocked"
+SCRAPE_STATUS_SKIPPED = "skipped"
+SCRAPE_STATUS_FAILED = "failed"
+RETRY_CACHE_SETTING_KEY = "scrape_retry_cache_v1"
+RETRY_CACHE_MAX_ENTRIES = 500
+
+
+@dataclass
+class ScrapeResult:
+    content: str | None
+    status: str
+    method: str | None = None
+    failure_reason: str | None = None
+    http_status: int | None = None
+
+    @property
+    def succeeded(self):
+        return bool(self.content)
+
 
 def get_domain(url):
     """Extract bare domain from a URL, stripping www."""
@@ -105,6 +130,239 @@ def get_domain(url):
         return netloc
     except Exception:
         return None
+
+
+def normalize_retry_cache_url(url):
+    """Normalize a URL for retry-cache lookups by stripping the query string."""
+    try:
+        parsed = urlparse(url)
+        return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+    except Exception:
+        return url
+
+
+def _utcnow():
+    return datetime.utcnow()
+
+
+def _empty_retry_cache():
+    return {"domains": {}, "urls": {}}
+
+
+def _load_retry_cache():
+    try:
+        from flask import has_app_context
+        if not has_app_context():
+            return _empty_retry_cache()
+
+        from aggregator.models import AppSetting
+        setting = AppSetting.query.filter_by(key=RETRY_CACHE_SETTING_KEY).first()
+        if not setting or not setting.value:
+            return _empty_retry_cache()
+
+        payload = json.loads(setting.value)
+        if not isinstance(payload, dict):
+            return _empty_retry_cache()
+        payload.setdefault("domains", {})
+        payload.setdefault("urls", {})
+        return payload
+    except Exception as exc:
+        logger.info(f"  [Scraper] Retry cache load skipped: {exc}")
+        return _empty_retry_cache()
+
+
+def _save_retry_cache(cache):
+    try:
+        from flask import has_app_context
+        if not has_app_context():
+            return
+
+        from aggregator import db
+        from aggregator.models import AppSetting
+
+        payload = json.dumps(cache, sort_keys=True)
+        setting = AppSetting.query.filter_by(key=RETRY_CACHE_SETTING_KEY).first()
+        if setting:
+            setting.value = payload
+        else:
+            db.session.add(AppSetting(key=RETRY_CACHE_SETTING_KEY, value=payload))
+        db.session.commit()
+    except Exception as exc:
+        logger.info(f"  [Scraper] Retry cache save skipped: {exc}")
+
+
+def _prune_retry_cache(cache, now=None):
+    now = now or _utcnow()
+    now_iso = now.isoformat()
+
+    for scope in ("domains", "urls"):
+        scope_cache = cache.get(scope, {})
+        expired = [
+            key for key, entry in scope_cache.items()
+            if not isinstance(entry, dict) or entry.get("defer_until", "") <= now_iso
+        ]
+        for key in expired:
+            scope_cache.pop(key, None)
+
+        if len(scope_cache) > RETRY_CACHE_MAX_ENTRIES:
+            ranked = sorted(
+                scope_cache.items(),
+                key=lambda item: item[1].get("updated_at", ""),
+                reverse=True,
+            )
+            cache[scope] = dict(ranked[:RETRY_CACHE_MAX_ENTRIES])
+
+    return cache
+
+
+def _build_retry_cache_entry(status, failure_reason, backoff_seconds, failure_count, now):
+    return {
+        "status": status,
+        "failure_reason": failure_reason,
+        "failure_count": failure_count,
+        "updated_at": now.isoformat(),
+        "defer_until": (now + timedelta(seconds=backoff_seconds)).isoformat(),
+    }
+
+
+def _backoff_seconds_for_result(result, failure_count, scope):
+    failure_reason = (result.failure_reason or "").lower()
+    http_status = result.http_status
+
+    if result.status == SCRAPE_STATUS_BLOCKED or "domain_blocked" in failure_reason:
+        return 24 * 3600 if scope == "domains" else 12 * 3600
+
+    if http_status == 429:
+        return (45 * 60 * failure_count) if scope == "urls" else (20 * 60 * max(1, failure_count - 1))
+
+    if http_status in (401, 403):
+        return (8 * 3600 * failure_count) if scope == "urls" else (6 * 3600 * max(1, failure_count - 1))
+
+    if http_status in (404, 410):
+        return 12 * 3600 if scope == "urls" else 0
+
+    if http_status and http_status >= 500:
+        return (20 * 60 * failure_count) if scope == "urls" else (10 * 60 * max(1, failure_count - 1))
+
+    if "timeout" in failure_reason or "timed out" in failure_reason:
+        return (15 * 60 * failure_count) if scope == "urls" else (10 * 60 * max(1, failure_count - 1))
+
+    if "extraction_failed" in failure_reason:
+        return (2 * 3600 * failure_count) if scope == "urls" else (60 * 60 * max(1, failure_count - 2))
+
+    return (60 * 60 * failure_count) if scope == "urls" else (30 * 60 * max(1, failure_count - 2))
+
+
+def _should_cache_retry_result(result):
+    if result.status in (SCRAPE_STATUS_SUCCESS, SCRAPE_STATUS_FALLBACK, SCRAPE_STATUS_SKIPPED):
+        return False
+    return True
+
+
+def update_retry_cache(url, result, now=None):
+    """Persist retry cooldowns based on scrape telemetry."""
+    now = now or _utcnow()
+    cache = _prune_retry_cache(_load_retry_cache(), now=now)
+    domain = get_domain(url)
+    normalized_url = normalize_retry_cache_url(url)
+
+    if result.status == SCRAPE_STATUS_SUCCESS:
+        if domain:
+            cache["domains"].pop(domain, None)
+        cache["urls"].pop(normalized_url, None)
+        _save_retry_cache(cache)
+        return
+
+    if result.status == SCRAPE_STATUS_FALLBACK:
+        cache["urls"].pop(normalized_url, None)
+        _save_retry_cache(cache)
+        return
+
+    if not _should_cache_retry_result(result):
+        return
+
+    url_entry = cache["urls"].get(normalized_url, {})
+    url_failure_count = int(url_entry.get("failure_count", 0)) + 1
+    url_backoff = _backoff_seconds_for_result(result, url_failure_count, "urls")
+    if url_backoff > 0:
+        cache["urls"][normalized_url] = _build_retry_cache_entry(
+            result.status,
+            result.failure_reason,
+            url_backoff,
+            url_failure_count,
+            now,
+        )
+
+    if domain:
+        domain_entry = cache["domains"].get(domain, {})
+        domain_failure_count = max(
+            int(domain_entry.get("failure_count", 0)) + 1,
+            sum(
+                max(1, int(entry.get("failure_count", 1)))
+                for cached_url, entry in cache["urls"].items()
+                if get_domain(cached_url) == domain
+            ),
+        )
+        domain_backoff = _backoff_seconds_for_result(result, domain_failure_count, "domains")
+        if domain_backoff > 0 and (
+            result.status == SCRAPE_STATUS_BLOCKED or domain_failure_count >= 3 or result.http_status in (401, 403, 429)
+        ):
+            cache["domains"][domain] = _build_retry_cache_entry(
+                result.status,
+                result.failure_reason,
+                domain_backoff,
+                domain_failure_count,
+                now,
+            )
+
+    _save_retry_cache(_prune_retry_cache(cache, now=now))
+
+
+def get_retry_deferral(url, now=None):
+    """Return an active retry deferral for this URL or domain, if any."""
+    now = now or _utcnow()
+    cache = _prune_retry_cache(_load_retry_cache(), now=now)
+    domain = get_domain(url)
+    normalized_url = normalize_retry_cache_url(url)
+    now_iso = now.isoformat()
+
+    url_entry = cache.get("urls", {}).get(normalized_url)
+    if isinstance(url_entry, dict) and url_entry.get("defer_until", "") > now_iso:
+        return "url", url_entry
+
+    if domain:
+        domain_entry = cache.get("domains", {}).get(domain)
+        if isinstance(domain_entry, dict) and domain_entry.get("defer_until", "") > now_iso:
+            return "domain", domain_entry
+
+    return None, None
+
+
+def should_try_variant_urls(http_status=None, failure_reason=None):
+    """Return False when the base failure is stable enough that variants are low-value."""
+    if http_status in (401, 403, 404, 410):
+        return False
+
+    failure_reason = (failure_reason or "").lower()
+    if failure_reason in {"http_401", "http_403", "http_404", "http_410"}:
+        return False
+
+    return True
+
+
+def should_auto_rescrape_article(article, minimum_content_length=500):
+    """Return True when this article is a good candidate for bulk auto-rescrape."""
+    status = (getattr(article, "scrape_status", None) or "pending").lower()
+    content = getattr(article, "content", None) or ""
+    content_length = len(_clean_text(re.sub(r"<[^>]+>", " ", content)))
+
+    if status in (SCRAPE_STATUS_BLOCKED, SCRAPE_STATUS_SKIPPED):
+        return False
+    if status in ("pending", SCRAPE_STATUS_FAILED):
+        return True
+    if status in (SCRAPE_STATUS_SUCCESS, SCRAPE_STATUS_FALLBACK):
+        return content_length < minimum_content_length
+    return not content or content_length < minimum_content_length
 
 
 def is_domain_blocked(url):
@@ -189,6 +447,18 @@ def sanitize_html(raw_html):
     )
 
 
+def _fetch_html(url, headers=None, timeout=10):
+    if headers is None:
+        headers = HEADERS_DEFAULT
+    response = requests.get(url, headers=headers, timeout=timeout)
+    response.raise_for_status()
+    return response
+
+
+def _clean_text(text):
+    return re.sub(r'\s+', ' ', (text or '')).strip()
+
+
 def extract_with_readability(html, url):
     """
     Use Mozilla's readability algorithm to extract main article content.
@@ -206,6 +476,127 @@ def extract_with_readability(html, url):
     except Exception as e:
         logger.info(f"  [Readability] Error: {e}")
     return None
+
+
+def extract_structured_metadata(html, url):
+    """
+    Extract article-ish text from JSON-LD, OpenGraph, Twitter cards, and
+    schema.org/article meta tags. Returns sanitized HTML or None.
+    """
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+    except Exception as e:
+        logger.info(f"  [Metadata] Parse error for {url[:60]}: {e}")
+        return None
+
+    candidates = []
+
+    for script in soup.find_all("script", attrs={"type": "application/ld+json"}):
+        raw = script.string or script.get_text()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            continue
+        stack = payload if isinstance(payload, list) else [payload]
+        for item in stack:
+            if not isinstance(item, dict):
+                continue
+            body = item.get("articleBody") or item.get("description")
+            headline = item.get("headline")
+            if body:
+                candidates.append((headline, body))
+
+    meta_fields = [
+        ("meta", {"property": "og:description"}),
+        ("meta", {"name": "twitter:description"}),
+        ("meta", {"name": "description"}),
+        ("meta", {"itemprop": "description"}),
+        ("meta", {"itemprop": "articleBody"}),
+    ]
+    for tag_name, attrs in meta_fields:
+        tag = soup.find(tag_name, attrs=attrs)
+        if not tag:
+            continue
+        value = tag.get("content") or tag.get_text()
+        if value:
+            candidates.append((None, value))
+
+    best_html = None
+    best_len = 0
+    for headline, body in candidates:
+        clean_body = _clean_text(body)
+        if len(clean_body) < 140:
+            continue
+        parts = []
+        if headline:
+            parts.append(f"<h2>{bleach.clean(headline, strip=True)}</h2>")
+        parts.append(f"<p>{bleach.clean(clean_body, strip=True)}</p>")
+        candidate_html = sanitize_html("<div>" + "".join(parts) + "</div>")
+        if len(candidate_html) > best_len:
+            best_html = candidate_html
+            best_len = len(candidate_html)
+
+    if best_html:
+        logger.info(f"  [Metadata] Extracted {best_len} chars from {url[:60]}")
+    return best_html
+
+
+def build_variant_urls(url, html=None):
+    """
+    Generate likely article variants without crossing origin boundaries.
+    """
+    variants = []
+    seen = set()
+
+    def add(candidate):
+        if not candidate or candidate == url or candidate in seen:
+            return
+        seen.add(candidate)
+        variants.append(candidate)
+
+    if html:
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            canonical = soup.find("link", rel=lambda value: value and "canonical" in value.lower())
+            if canonical and canonical.get("href"):
+                add(urljoin(url, canonical["href"]))
+
+            amp = soup.find("link", rel=lambda value: value and "amphtml" in value.lower())
+            if amp and amp.get("href"):
+                add(urljoin(url, amp["href"]))
+        except Exception:
+            pass
+
+    parsed = urlparse(url)
+    query_pairs = dict(parse_qsl(parsed.query, keep_blank_values=True))
+
+    if "output" not in query_pairs:
+        q = dict(query_pairs)
+        q["output"] = "amp"
+        add(urlunparse(parsed._replace(query=urlencode(q, doseq=True))))
+
+    if "amp" not in query_pairs:
+        q = dict(query_pairs)
+        q["amp"] = "1"
+        add(urlunparse(parsed._replace(query=urlencode(q, doseq=True))))
+
+    if "mobile" not in query_pairs:
+        q = dict(query_pairs)
+        q["mobile"] = "1"
+        add(urlunparse(parsed._replace(query=urlencode(q, doseq=True))))
+
+    if not parsed.path.endswith("/amp"):
+        add(urlunparse(parsed._replace(path=parsed.path.rstrip("/") + "/amp")))
+    if not parsed.path.endswith("/print"):
+        add(urlunparse(parsed._replace(path=parsed.path.rstrip("/") + "/print")))
+
+    host = parsed.netloc
+    if host.startswith("www."):
+        add(urlunparse(parsed._replace(netloc="m." + host[4:])))
+
+    return variants
 
 
 def extract_article_html_bs4(url, headers=None):
@@ -345,73 +736,150 @@ def extract_article_html_playwright(url):
         return None
 
 
-def try_archive_fallback(url):
+def scrape_article(url, fallback_content=None, force=False):
     """
-    Try to fetch article from archive.ph as a paywall fallback.
-    Returns sanitized HTML or None.
-    """
-    archive_url = f"https://archive.ph/{url}"
-    logger.info(f"  [Archive] Trying archive.ph for {url[:60]}")
-    try:
-        response = requests.get(archive_url, headers=HEADERS_DEFAULT, timeout=15)
-        if response.status_code == 200:
-            content = extract_with_readability(response.text, archive_url)
-            if content:
-                logger.info(f"  [Archive] Successfully extracted from archive.ph")
-                return content
-    except Exception as e:
-        logger.info(f"  [Archive] Error: {e}")
-    return None
-
-
-def scrape_article(url):
-    """
-    Main entry point. Strategy:
-    1. Skip if domain is on the blocklist
-    2. Skip social/video domains entirely
-    3. For Playwright domains — use Playwright, fall back to archive.ph
-    4. For Googlebot domains — try Googlebot UA first
-    5. For everything else — try BS4 (with readability), fall back to Playwright, then archive.ph
-    6. After any successful scrape, run bad-scrape detection
-    Returns sanitized HTML or None.
+    Main scraping entry point.
+    The fallback order stays within the publisher's own surface area:
+    direct HTML extraction, content variants, structured metadata, then
+    caller-provided RSS/API descriptions.
+    Returns a ScrapeResult with content and telemetry.
     """
     if is_domain_blocked(url):
         logger.info(f"  [Scraper] Domain blocked, skipping: {url[:60]}")
-        return None
+        return ScrapeResult(
+            content=None,
+            status=SCRAPE_STATUS_BLOCKED,
+            method="blocklist",
+            failure_reason="domain_blocked",
+        )
 
     if should_skip(url):
         logger.info(f"  [Scraper] Skipping {url[:60]}")
+        return ScrapeResult(
+            content=None,
+            status=SCRAPE_STATUS_SKIPPED,
+            method="skiplist",
+            failure_reason="unsupported_domain",
+        )
+
+    if not force:
+        scope, deferral = get_retry_deferral(url)
+        if deferral:
+            logger.info(
+                "  [Scraper] Deferring retry for %s (%s until %s)",
+                url[:60],
+                scope,
+                deferral.get("defer_until"),
+            )
+            return ScrapeResult(
+                content=None,
+                status=SCRAPE_STATUS_FAILED,
+                method="retry_cache",
+                failure_reason=f"retry_deferred_{scope}:{deferral.get('failure_reason') or 'cooldown'}",
+            )
+
+    attempted_methods = []
+    last_failure = None
+    http_status = None
+    initial_html = None
+
+    def finalize_content(content, method, status=SCRAPE_STATUS_SUCCESS, http_status_override=None):
+        if content:
+            is_bad, reason = detect_bad_scrape(content)
+            if is_bad:
+                logger.warning(f"  [Scraper] {reason} — clearing content and blocking domain for {url[:60]}")
+                add_to_blocklist(url, reason)
+                return ScrapeResult(
+                    content=None,
+                    status=SCRAPE_STATUS_BLOCKED,
+                    method=method,
+                    failure_reason=reason,
+                    http_status=http_status_override if http_status_override is not None else http_status,
+                )
+        result = ScrapeResult(
+            content=content,
+            status=status,
+            method=method,
+            http_status=http_status_override if http_status_override is not None else http_status,
+        )
+        update_retry_cache(url, result)
+        return result
+
+    def try_bs4(candidate_url, headers=None, method="bs4"):
+        nonlocal last_failure, http_status, initial_html
+        attempted_methods.append(method)
+        try:
+            response = _fetch_html(candidate_url, headers=headers)
+            http_status = response.status_code
+            if candidate_url == url and headers == HEADERS_DEFAULT:
+                initial_html = response.text
+            content = extract_with_readability(response.text, candidate_url)
+            if content:
+                return finalize_content(content, method)
+
+            content = extract_structured_metadata(response.text, candidate_url)
+            if content:
+                return finalize_content(content, f"{method}_metadata", SCRAPE_STATUS_FALLBACK)
+
+            content = extract_article_html_bs4(candidate_url, headers=headers)
+            if content:
+                return finalize_content(content, method)
+        except requests.HTTPError as exc:
+            http_status = exc.response.status_code if exc.response is not None else http_status
+            last_failure = f"http_{http_status}" if http_status else "http_error"
+            logger.info(f"  [Scraper] HTTP error for {candidate_url[:60]}: {last_failure}")
+        except Exception as exc:
+            last_failure = str(exc)
+            logger.info(f"  [Scraper] Error for {candidate_url[:60]}: {exc}")
         return None
 
-    content = None
+    if use_googlebot(url):
+        logger.info(f"  [Scraper] Using Googlebot UA for {url[:60]}")
+        result = try_bs4(url, headers=HEADERS_GOOGLEBOT, method="googlebot_bs4")
+        if result and result.succeeded:
+            return result
+
+    result = try_bs4(url, method="bs4")
+    if result and result.succeeded:
+        return result
 
     if needs_playwright(url):
         logger.info(f"  [Scraper] Using Playwright for {url[:60]}")
+        attempted_methods.append("playwright")
         content = extract_article_html_playwright(url)
-        if not content:
-            content = try_archive_fallback(url)
+        if content:
+            return finalize_content(content, "playwright")
 
-    elif use_googlebot(url):
-        logger.info(f"  [Scraper] Using Googlebot UA for {url[:60]}")
-        content = extract_article_html_bs4(url, headers=HEADERS_GOOGLEBOT)
-        if not content:
-            content = extract_article_html_bs4(url, headers=HEADERS_DEFAULT)
-        if not content:
-            content = try_archive_fallback(url)
+    if should_try_variant_urls(http_status=http_status, failure_reason=last_failure):
+        for variant_url in build_variant_urls(url, html=initial_html):
+            logger.info(f"  [Scraper] Trying variant {variant_url[:80]}")
+            variant_result = try_bs4(variant_url, method="variant_bs4")
+            if variant_result and variant_result.succeeded:
+                return ScrapeResult(
+                    content=variant_result.content,
+                    status=SCRAPE_STATUS_FALLBACK,
+                    method="variant_bs4",
+                    http_status=variant_result.http_status,
+                )
 
-    else:
-        content = extract_article_html_bs4(url)
-        if not content:
-            logger.info(f"  [Scraper] BS4 failed, trying Playwright for {url[:60]}")
-            content = extract_article_html_playwright(url)
-        if not content:
-            content = try_archive_fallback(url)
+    if initial_html:
+        attempted_methods.append("metadata")
+        content = extract_structured_metadata(initial_html, url)
+        if content:
+            return finalize_content(content, "metadata", SCRAPE_STATUS_FALLBACK)
 
-    if content:
-        is_bad, reason = detect_bad_scrape(content)
-        if is_bad:
-            logger.warning(f"  [Scraper] {reason} — clearing content and blocking domain for {url[:60]}")
-            add_to_blocklist(url, reason)
-            return None
+    if fallback_content:
+        logger.info(f"  [Scraper] Falling back to feed/API description for {url[:60]}")
+        content = sanitize_html(f"<div><p>{bleach.clean(_clean_text(fallback_content), strip=True)}</p></div>")
+        if len(_clean_text(fallback_content)) >= 80:
+            return finalize_content(content, "feed_description", SCRAPE_STATUS_FALLBACK)
 
-    return content
+    result = ScrapeResult(
+        content=None,
+        status=SCRAPE_STATUS_FAILED,
+        method=" > ".join(attempted_methods) if attempted_methods else None,
+        failure_reason=last_failure or "extraction_failed",
+        http_status=http_status,
+    )
+    update_retry_cache(url, result)
+    return result

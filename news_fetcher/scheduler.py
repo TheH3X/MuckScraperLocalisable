@@ -5,13 +5,15 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from aggregator import create_app, db
 from aggregator.models import AppSetting
-from news_fetcher.fetch_and_store_articles import fetch_and_store_articles, process_current_edition, sync_allsides_ratings, publish_edition, retry_unrated_outlets
+from news_fetcher.fetch_and_store_articles import fetch_and_store_articles, process_current_edition, review_ambiguous_grouping_matches, sync_allsides_ratings, publish_edition, retry_unrated_outlets
 from news_fetcher.rss_fetcher import fetch_and_store_rss
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 import sys
 import os
 import requests
+import json
+from zoneinfo import ZoneInfo
 
 logging.basicConfig(
     stream=sys.stdout,
@@ -19,8 +21,9 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
-# New schedule times in Eastern Time: 7am, 12pm, 5pm, 10pm
-SCHEDULE_HOURS = "7,12,17,22"
+# Fetch runs can be more frequent than full edition publishing.
+FETCH_SCHEDULE_HOURS = os.environ.get("FETCH_SCHEDULE_HOURS") or "7,12,17,22"
+FULL_PIPELINE_HOURS = os.environ.get("FULL_PIPELINE_HOURS") or "7,17"
 TIMEZONE = "America/New_York"
 
 SCHEDULED_FETCHES = [
@@ -77,6 +80,8 @@ SCHEDULED_FETCHES = [
 ]
 
 app = create_app()
+SCRAPE_OUTCOME_HISTORY_KEY = "scrape_outcome_history_v1"
+SCRAPE_OUTCOME_HISTORY_MAX_RUNS = 40
 
 
 def run_optional_headline_ranking():
@@ -88,29 +93,205 @@ def run_optional_headline_ranking():
         from news_fetcher.headline_ranker import run_headline_ranking
     except ImportError as e:
         logging.info(f"--- Headline ranking skipped ({e}) ---")
-        return
+        return {
+            "status": "skipped",
+            "reason": str(e),
+        }
 
     run_headline_ranking()
+    return {"status": "ok"}
 
 
 def run_optional_static_export():
     """
-    Export the private static site when the ignored private exporter exists.
-    This lets muckscraper.news publish after edition processing without making
-    the open-source stack depend on private templates or routes.
+    Export optional static output when an additional exporter is available.
+    This keeps the main open-source stack working even when deployment-specific
+    export code is not present.
     """
     try:
         from private_site.export_static import export_static_site
     except ImportError as e:
         logging.warning(
-            "--- Static site export skipped (%s). If the public site is enabled, "
-            "make sure docker-compose.private.yml is loaded and mounts "
-            "./private_site and ./site_output into the scheduler container. ---",
+            "--- Optional static export skipped (%s). If static publishing is "
+            "enabled in this deployment, make sure the extra exporter module "
+            "and output mounts are available to the scheduler container. ---",
             e,
         )
-        return
+        return {
+            "status": "skipped",
+            "reason": str(e),
+        }
 
     export_static_site()
+    return {"status": "ok"}
+
+
+def _load_json_setting(key):
+    setting = AppSetting.query.filter_by(key=key).first()
+    if not setting or not setting.value:
+        return None
+    try:
+        return json.loads(setting.value)
+    except Exception:
+        logging.warning("Could not parse JSON AppSetting for key=%s", key)
+        return None
+
+
+def _save_json_setting(key, value):
+    payload = json.dumps(value, sort_keys=True)
+    setting = AppSetting.query.filter_by(key=key).first()
+    if setting:
+        setting.value = payload
+    else:
+        db.session.add(AppSetting(key=key, value=payload))
+    db.session.commit()
+
+
+def _build_scrape_outcome_history_entry(run_metrics, headline_site_metrics):
+    started_at = run_metrics.get("started_at")
+    finished_at = run_metrics.get("finished_at")
+    duration_seconds = None
+    if started_at and finished_at:
+        try:
+            duration_seconds = int(
+                (datetime.fromisoformat(finished_at) - datetime.fromisoformat(started_at)).total_seconds()
+            )
+        except Exception:
+            duration_seconds = None
+
+    return {
+        "recorded_at": finished_at or datetime.utcnow().isoformat(),
+        "status": run_metrics.get("status"),
+        "duration_seconds": duration_seconds,
+        "edition": headline_site_metrics.get("edition"),
+        "run_scrape_statuses": dict(run_metrics.get("totals", {}).get("scrape_statuses", {})),
+        "headline_scrape": dict(headline_site_metrics.get("scrape", {}).get("articles_by_status", {})),
+        "headline_readable_articles": headline_site_metrics.get("scrape", {}).get("readable_articles"),
+        "headline_fully_read_articles": headline_site_metrics.get("scrape", {}).get("fully_read_articles"),
+        "headline_blocked_articles": headline_site_metrics.get("scrape", {}).get("blocked_articles"),
+        "stored_articles": run_metrics.get("totals", {}).get("stored"),
+        "input_articles": run_metrics.get("totals", {}).get("input_articles"),
+    }
+
+
+def append_scrape_outcome_history(run_metrics, headline_site_metrics, max_runs=SCRAPE_OUTCOME_HISTORY_MAX_RUNS):
+    history = _load_json_setting(SCRAPE_OUTCOME_HISTORY_KEY)
+    if not isinstance(history, list):
+        history = []
+
+    history.append(_build_scrape_outcome_history_entry(run_metrics, headline_site_metrics))
+    history = history[-max_runs:]
+    _save_json_setting(SCRAPE_OUTCOME_HISTORY_KEY, history)
+    return history
+
+
+def _merge_counts(target, source):
+    for key, value in (source or {}).items():
+        target[key] = target.get(key, 0) + value
+
+
+def _bias_bucket(score):
+    if score is None:
+        return "unrated"
+    if score <= 1.5:
+        return "left"
+    if score <= 2.5:
+        return "lean_left"
+    if score <= 3.5:
+        return "center"
+    if score <= 4.5:
+        return "lean_right"
+    return "right"
+
+
+def build_headline_site_metrics():
+    from aggregator.models import Edition, EditionStory
+
+    latest_edition = Edition.query.filter_by(published=True).order_by(
+        Edition.created_at.desc()
+    ).first()
+    if not latest_edition:
+        return {
+            "status": "no_published_edition",
+            "recorded_at": datetime.utcnow().isoformat(),
+        }
+
+    edition_stories = latest_edition.edition_stories.order_by(EditionStory.rank).all()
+    stories = [edition_story.story for edition_story in edition_stories]
+    article_ids = set()
+    outlet_ids = set()
+    article_bias_counts = {}
+    outlet_bias_counts = {}
+    outlet_bias_source_counts = {"allsides": 0, "ai": 0, "unrated": 0}
+    scrape_status_counts = {
+        "success": 0,
+        "fallback": 0,
+        "blocked": 0,
+        "failed": 0,
+        "skipped": 0,
+        "pending": 0,
+    }
+    stories_with_bias_mix = 0
+    stories_with_unrated_articles = 0
+    multi_source_story_count = 0
+
+    for story in stories:
+        story_bias_buckets = set()
+        story_outlet_ids = set()
+
+        for article in story.articles:
+            article_ids.add(article.id)
+            if article.outlet_id:
+                story_outlet_ids.add(article.outlet_id)
+
+            scrape_status = (article.scrape_status or "pending").lower()
+            scrape_status_counts[scrape_status] = scrape_status_counts.get(scrape_status, 0) + 1
+
+            bucket = _bias_bucket(article.bias_score if article.bias_score is not None else (article.outlet.bias_score if article.outlet else None))
+            article_bias_counts[bucket] = article_bias_counts.get(bucket, 0) + 1
+            story_bias_buckets.add(bucket)
+
+            if article.outlet and article.outlet.id not in outlet_ids:
+                outlet_ids.add(article.outlet.id)
+                outlet_bucket = _bias_bucket(article.outlet.bias_score)
+                outlet_bias_counts[outlet_bucket] = outlet_bias_counts.get(outlet_bucket, 0) + 1
+                bias_source = article.outlet.bias_source or "unrated"
+                outlet_bias_source_counts[bias_source] = outlet_bias_source_counts.get(bias_source, 0) + 1
+
+        if len(story_outlet_ids) > 1:
+            multi_source_story_count += 1
+        if len({bucket for bucket in story_bias_buckets if bucket != "unrated"}) >= 2:
+            stories_with_bias_mix += 1
+        if "unrated" in story_bias_buckets:
+            stories_with_unrated_articles += 1
+
+    return {
+        "status": "ok",
+        "recorded_at": datetime.utcnow().isoformat(),
+        "edition": {
+            "id": latest_edition.id,
+            "date": latest_edition.date.isoformat(),
+            "edition_type": latest_edition.edition_type,
+            "created_at": latest_edition.created_at.isoformat() if latest_edition.created_at else None,
+        },
+        "story_count": len(stories),
+        "article_count": len(article_ids),
+        "outlet_count": len(outlet_ids),
+        "multi_source_story_count": multi_source_story_count,
+        "stories_with_bias_mix": stories_with_bias_mix,
+        "stories_with_unrated_articles": stories_with_unrated_articles,
+        "bias": {
+            "articles_by_bucket": article_bias_counts,
+            "outlets_by_bucket": outlet_bias_counts,
+            "outlets_by_source": outlet_bias_source_counts,
+        },
+        "scrape": {
+            "articles_by_status": scrape_status_counts,
+            "readable_articles": scrape_status_counts.get("success", 0) + scrape_status_counts.get("fallback", 0),
+            "fully_read_articles": scrape_status_counts.get("success", 0),
+            "blocked_articles": scrape_status_counts.get("blocked", 0),
+        },
+    }
 
 
 def get_last_fetch_time():
@@ -157,29 +338,124 @@ def set_last_allsides_sync():
     db.session.commit()
 
 
-def should_fetch_now():
+def _parse_schedule_hours(raw_hours):
+    return sorted(int(hour.strip()) for hour in raw_hours.split(",") if hour.strip())
+
+
+def _scheduled_hours():
+    return _parse_schedule_hours(FETCH_SCHEDULE_HOURS)
+
+
+def _full_pipeline_hours():
+    return _parse_schedule_hours(FULL_PIPELINE_HOURS)
+
+
+def _latest_scheduled_run_before(now=None):
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+
+    local_tz = ZoneInfo(TIMEZONE)
+    local_now = now.astimezone(local_tz)
+
+    candidates = []
+    for day_offset in (0, -1):
+        candidate_date = (local_now + timedelta(days=day_offset)).date()
+        for hour in _scheduled_hours():
+            candidates.append(
+                datetime(
+                    candidate_date.year,
+                    candidate_date.month,
+                    candidate_date.day,
+                    hour,
+                    0,
+                    tzinfo=local_tz,
+                )
+            )
+
+    eligible = [candidate for candidate in candidates if candidate <= local_now]
+    if not eligible:
+        return None
+    return max(eligible).astimezone(timezone.utc)
+
+
+def _latest_full_pipeline_run_before(now=None):
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+
+    local_tz = ZoneInfo(TIMEZONE)
+    local_now = now.astimezone(local_tz)
+
+    candidates = []
+    for day_offset in (0, -1):
+        candidate_date = (local_now + timedelta(days=day_offset)).date()
+        for hour in _full_pipeline_hours():
+            candidates.append(
+                datetime(
+                    candidate_date.year,
+                    candidate_date.month,
+                    candidate_date.day,
+                    hour,
+                    0,
+                    tzinfo=local_tz,
+                )
+            )
+
+    eligible = [candidate for candidate in candidates if candidate <= local_now]
+    if not eligible:
+        return None
+    return max(eligible).astimezone(timezone.utc)
+
+
+def should_fetch_now(now=None, last_fetch=None):
     """
-    Returns True if it's been more than 1 hour since the last fetch,
-    or if no fetch has ever been recorded. This allows the scheduler 
-    to fetch on startup if it was offline during a scheduled window.
+    Returns True on startup only when the app missed a scheduled fetch slot.
+    This avoids ad-hoc catch-up runs based on elapsed time alone.
     """
-    last_fetch = get_last_fetch_time()
+    if last_fetch is None:
+        last_fetch = get_last_fetch_time()
+
     if not last_fetch:
-        logging.info("No record of previous fetch. Initializing...")
+        logging.info("No record of previous fetch. Initializing with a startup fetch.")
         return True
 
-    elapsed = datetime.utcnow() - last_fetch
-    threshold = timedelta(hours=1)
+    if last_fetch.tzinfo is None:
+        last_fetch = last_fetch.replace(tzinfo=timezone.utc)
 
-    if elapsed >= threshold:
-        logging.info(f"Last fetch was {elapsed} ago, fetching now.")
-        return True
-    else:
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+
+    latest_scheduled_run = _latest_scheduled_run_before(now=now)
+    if latest_scheduled_run and last_fetch < latest_scheduled_run:
         logging.info(
-            f"Last fetch was {int(elapsed.total_seconds() / 60)} minutes ago. "
-            f"Skipping startup fetch."
+            "Last fetch at %s missed scheduled run at %s, fetching on startup.",
+            last_fetch.isoformat(),
+            latest_scheduled_run.isoformat(),
         )
-        return False
+        return True
+
+    logging.info(
+        "Last fetch at %s is up to date with scheduled runs. Skipping startup fetch.",
+        last_fetch.isoformat(),
+    )
+    return False
+
+
+def should_run_full_pipeline(now=None, last_fetch=None):
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+
+    if last_fetch is not None:
+        if last_fetch.tzinfo is None:
+            last_fetch = last_fetch.replace(tzinfo=timezone.utc)
+        latest_full_slot = _latest_full_pipeline_run_before(now=now)
+        return bool(latest_full_slot and last_fetch < latest_full_slot)
+
+    local_now = now.astimezone(ZoneInfo(TIMEZONE))
+    return local_now.hour in _full_pipeline_hours()
 
 
 def _notify_n8n():
@@ -187,20 +463,125 @@ def _notify_n8n():
     if not webhook:
         return
     try:
-        requests.post(webhook, timeout=5)
-        logging.info("  [n8n] Webhook fired — Ollama suspend sequence triggered")
+        from news_fetcher.summarizer import check_ollama_status
+
+        if not check_ollama_status():
+            logging.info("  [n8n] Ollama already unreachable, skipping suspend webhook")
+            return
+
+        response = requests.post(webhook, timeout=5)
+        response.raise_for_status()
+        logging.info(
+            "  [n8n] Webhook fired — Ollama suspend sequence triggered (status %s)",
+            response.status_code,
+        )
     except Exception as e:
         logging.warning(f"  [n8n] Webhook failed ({e}) — continuing normally")
 
 
-def run_all_fetches():
+def _check_ollama_status_for_report(ollama_state, label):
+    from news_fetcher.summarizer import check_ollama_status
+
+    try:
+        is_up = check_ollama_status()
+    except Exception as e:
+        logging.warning("  [Ollama] Health check failed during %s (%s)", label, e)
+        is_up = False
+
+    checked_at = datetime.utcnow().isoformat()
+    ollama_state["checks"].append({
+        "at": checked_at,
+        "label": label,
+        "up": is_up,
+    })
+    if not is_up:
+        ollama_state["went_down_during_run"] = True
+    return is_up
+
+
+def _build_fetch_report(run_metrics, headline_site_metrics, ollama_state):
+    started_at = datetime.fromisoformat(run_metrics["started_at"])
+    finished_at = datetime.fromisoformat(run_metrics["finished_at"])
+    duration_seconds = int((finished_at - started_at).total_seconds())
+    run_totals = run_metrics.get("totals", {})
+    headline_scrape = dict(headline_site_metrics.get("scrape", {}).get("articles_by_status", {}))
+    edition = headline_site_metrics.get("edition", {}) or {}
+
+    return {
+        "status": run_metrics.get("status", "unknown"),
+        "started_at": run_metrics["started_at"],
+        "finished_at": run_metrics["finished_at"],
+        "duration_seconds": duration_seconds,
+        # Backward-compatible top-level summary fields for n8n formatters.
+        "input_articles": run_totals.get("input_articles", 0),
+        "stored_articles": run_totals.get("stored", 0),
+        "new_outlets": run_totals.get("new_outlets", 0),
+        "stories_touched": run_totals.get("stories_touched", 0),
+        "run_scrape_statuses": dict(run_totals.get("scrape_statuses", {})),
+        "headline_scrape": headline_scrape,
+        "headline_readable_articles": headline_site_metrics.get("scrape", {}).get("readable_articles", 0),
+        "headline_fully_read_articles": headline_site_metrics.get("scrape", {}).get("fully_read_articles", 0),
+        "headline_blocked_articles": headline_site_metrics.get("scrape", {}).get("blocked_articles", 0),
+        "edition": {
+            "id": edition.get("id"),
+            "date": edition.get("date"),
+            "edition_type": edition.get("edition_type"),
+        },
+        "ollama": ollama_state,
+        "run_metrics": run_metrics,
+        "headline_metrics": headline_site_metrics,
+    }
+
+
+def _notify_fetch_report(report_payload):
+    webhook = os.getenv("N8N_FETCH_REPORT_WEBHOOK_URL")
+    if not webhook:
+        return
+
+    try:
+        response = requests.post(webhook, json=report_payload, timeout=10)
+        response.raise_for_status()
+        logging.info(
+            "  [n8n] Fetch report webhook fired (status %s)",
+            response.status_code,
+        )
+    except Exception as e:
+        logging.warning(f"  [n8n] Fetch report webhook failed ({e}) — continuing normally")
+
+
+def run_all_fetches(run_full_pipeline=True):
     logging.info("=== Starting scheduled fetch run ===")
     with app.app_context():
+        ollama_state = {
+            "up_at_start": False,
+            "up_at_end": False,
+            "went_down_during_run": False,
+            "checks": [],
+        }
+        run_metrics = {
+            "status": "ok",
+            "started_at": datetime.utcnow().isoformat(),
+            "topics": {},
+            "rss": None,
+            "totals": {
+                "input_articles": 0,
+                "stored": 0,
+                "new_outlets": 0,
+                "stories_touched": 0,
+                "skipped": {},
+                "scrape_statuses": {},
+                "bias_buckets": {},
+                "bias_sources": {},
+            },
+            "steps": {},
+        }
+        ollama_state["up_at_start"] = _check_ollama_status_for_report(ollama_state, "run_start")
+
         # Fetch all categories
         for fetch in SCHEDULED_FETCHES:
             logging.info(f"--- Fetching: {fetch['label']} ---")
             try:
-                fetch_and_store_articles(
+                topic_metrics = fetch_and_store_articles(
                     fetch["label"],
                     mode=fetch["mode"],
                     query=fetch["query"],
@@ -209,61 +590,151 @@ def run_all_fetches():
                     gnews_query=fetch["gnews_query"],
                     gnews_category=fetch["gnews_category"]
                 )
+                run_metrics["topics"][fetch["label"]] = topic_metrics
+                for provider_metrics in topic_metrics.get("providers", {}).values():
+                    run_metrics["totals"]["input_articles"] += provider_metrics.get("input_articles", 0)
+                    run_metrics["totals"]["stored"] += provider_metrics.get("stored", 0)
+                    run_metrics["totals"]["new_outlets"] += provider_metrics.get("new_outlets", 0)
+                    run_metrics["totals"]["stories_touched"] += provider_metrics.get("stories_touched", 0)
+                    _merge_counts(run_metrics["totals"]["skipped"], provider_metrics.get("skipped"))
+                    _merge_counts(run_metrics["totals"]["scrape_statuses"], provider_metrics.get("scrape_statuses"))
+                    _merge_counts(run_metrics["totals"]["bias_buckets"], provider_metrics.get("bias_buckets"))
+                    _merge_counts(run_metrics["totals"]["bias_sources"], provider_metrics.get("bias_sources"))
             except Exception as e:
+                db.session.rollback()
                 logging.error(f"Error fetching {fetch['label']}: {e}")
+                run_metrics["status"] = "partial_error"
+                run_metrics["topics"][fetch["label"]] = {
+                    "status": "error",
+                    "reason": str(e),
+                }
 
         # Run RSS fetch for major wire services and networks
         logging.info("--- Fetching RSS feeds ---")
         try:
-            fetch_and_store_rss()
+            rss_metrics = fetch_and_store_rss()
+            run_metrics["rss"] = rss_metrics
+            run_metrics["totals"]["input_articles"] += rss_metrics.get("input_articles", 0)
+            run_metrics["totals"]["stored"] += rss_metrics.get("stored", 0)
+            run_metrics["totals"]["new_outlets"] += rss_metrics.get("new_outlets", 0)
+            run_metrics["totals"]["stories_touched"] += rss_metrics.get("stories_touched", 0)
+            _merge_counts(run_metrics["totals"]["skipped"], rss_metrics.get("skipped"))
+            _merge_counts(run_metrics["totals"]["scrape_statuses"], rss_metrics.get("scrape_statuses"))
+            _merge_counts(run_metrics["totals"]["bias_buckets"], rss_metrics.get("bias_buckets"))
+            _merge_counts(run_metrics["totals"]["bias_sources"], rss_metrics.get("bias_sources"))
         except Exception as e:
+            db.session.rollback()
             logging.error(f"Error fetching RSS feeds: {e}")
+            run_metrics["status"] = "partial_error"
+            run_metrics["rss"] = {
+                "status": "error",
+                "reason": str(e),
+            }
 
-        # Run Bias Checker ONCE after all fetches
-        logging.info("--- Retrying unrated outlets (Bias Checker) ---")
-        try:
-            retry_unrated_outlets()
-        except Exception as e:
-            logging.error(f"Error checking outlet bias: {e}")
-
-        # Run AllSides sync once a month
-        last_sync = get_last_allsides_sync()
-        if last_sync is None or (datetime.utcnow() - last_sync).days >= 30:
-            logging.info("--- Syncing AllSides bias ratings ---")
+        if run_full_pipeline:
+            # Run Bias Checker ONCE after all fetches
+            logging.info("--- Retrying unrated outlets (Bias Checker) ---")
+            _check_ollama_status_for_report(ollama_state, "before_retry_unrated_outlets")
             try:
-                sync_allsides_ratings()
-                set_last_allsides_sync()
+                retry_unrated_outlets()
+                run_metrics["steps"]["retry_unrated_outlets"] = {"status": "ok"}
             except Exception as e:
-                logging.error(f"Error syncing AllSides ratings: {e}")
+                db.session.rollback()
+                logging.error(f"Error checking outlet bias: {e}")
+                run_metrics["status"] = "partial_error"
+                run_metrics["steps"]["retry_unrated_outlets"] = {"status": "error", "reason": str(e)}
+
+            # Run AllSides sync once a month
+            last_sync = get_last_allsides_sync()
+            if last_sync is None or (datetime.utcnow() - last_sync).days >= 30:
+                logging.info("--- Syncing AllSides bias ratings ---")
+                try:
+                    sync_allsides_ratings()
+                    set_last_allsides_sync()
+                    run_metrics["steps"]["allsides_sync"] = {"status": "ok"}
+                except Exception as e:
+                    db.session.rollback()
+                    logging.error(f"Error syncing AllSides ratings: {e}")
+                    run_metrics["status"] = "partial_error"
+                    run_metrics["steps"]["allsides_sync"] = {"status": "error", "reason": str(e)}
+            else:
+                days_since = (datetime.utcnow() - last_sync).days
+                logging.info(f"--- AllSides sync skipped ({days_since}/30 days) ---")
+                run_metrics["steps"]["allsides_sync"] = {
+                    "status": "skipped",
+                    "days_since_last_sync": days_since,
+                }
+
+            logging.info("--- Running headline ranking ---")
+            _check_ollama_status_for_report(ollama_state, "before_headline_ranking")
+            try:
+                run_metrics["steps"]["review_ambiguous_grouping_matches"] = review_ambiguous_grouping_matches()
+            except Exception as e:
+                db.session.rollback()
+                logging.error(f"Error reviewing ambiguous grouping matches: {e}")
+                run_metrics["status"] = "partial_error"
+                run_metrics["steps"]["review_ambiguous_grouping_matches"] = {"status": "error", "reason": str(e)}
+            try:
+                run_metrics["steps"]["headline_ranking"] = run_optional_headline_ranking()
+            except Exception as e:
+                db.session.rollback()
+                logging.error(f"Error in headline ranking: {e}")
+                run_metrics["status"] = "partial_error"
+                run_metrics["steps"]["headline_ranking"] = {"status": "error", "reason": str(e)}
+
+            logging.info("--- Publishing edition ---")
+            try:
+                run_metrics["steps"]["publish_edition"] = publish_edition()
+            except Exception as e:
+                db.session.rollback()
+                logging.error(f"Error publishing edition: {e}")
+                run_metrics["status"] = "partial_error"
+                run_metrics["steps"]["publish_edition"] = {"status": "error", "reason": str(e)}
+
+            logging.info("--- Processing current edition content ---")
+            _check_ollama_status_for_report(ollama_state, "before_process_current_edition")
+            try:
+                run_metrics["steps"]["process_current_edition"] = process_current_edition()
+            except Exception as e:
+                db.session.rollback()
+                logging.error(f"Error processing edition content: {e}")
+                run_metrics["status"] = "partial_error"
+                run_metrics["steps"]["process_current_edition"] = {"status": "error", "reason": str(e)}
+
+            logging.info("--- Exporting static site ---")
+            try:
+                run_metrics["steps"]["static_export"] = run_optional_static_export()
+            except Exception as e:
+                db.session.rollback()
+                logging.error(f"Error exporting static site: {e}")
+                run_metrics["status"] = "partial_error"
+                run_metrics["steps"]["static_export"] = {"status": "error", "reason": str(e)}
         else:
-            days_since = (datetime.utcnow() - last_sync).days
-            logging.info(f"--- AllSides sync skipped ({days_since}/30 days) ---")
-
-        logging.info("--- Running headline ranking ---")
-        try:
-            run_optional_headline_ranking()
-        except Exception as e:
-            logging.error(f"Error in headline ranking: {e}")
-
-        logging.info("--- Publishing edition ---")
-        try:
-            publish_edition()
-        except Exception as e:
-            logging.error(f"Error publishing edition: {e}")
-
-        logging.info("--- Processing current edition content ---")
-        try:
-            process_current_edition()
-        except Exception as e:
-            logging.error(f"Error processing edition content: {e}")
-
-        logging.info("--- Exporting static site ---")
-        try:
-            run_optional_static_export()
-        except Exception as e:
-            logging.error(f"Error exporting static site: {e}")
+            run_metrics["steps"]["retry_unrated_outlets"] = {"status": "skipped", "reason": "fetch_only_run"}
+            run_metrics["steps"]["allsides_sync"] = {"status": "skipped", "reason": "fetch_only_run"}
+            run_metrics["steps"]["review_ambiguous_grouping_matches"] = {"status": "skipped", "reason": "fetch_only_run"}
+            run_metrics["steps"]["headline_ranking"] = {"status": "skipped", "reason": "fetch_only_run"}
+            run_metrics["steps"]["publish_edition"] = {"status": "skipped", "reason": "fetch_only_run"}
+            run_metrics["steps"]["process_current_edition"] = {"status": "skipped", "reason": "fetch_only_run"}
+            run_metrics["steps"]["static_export"] = {"status": "skipped", "reason": "fetch_only_run"}
 
         set_last_fetch_time()
+        run_metrics["finished_at"] = datetime.utcnow().isoformat()
+        ollama_state["up_at_end"] = _check_ollama_status_for_report(ollama_state, "run_end")
+        _save_json_setting("last_run_metrics", run_metrics)
+        headline_site_metrics = build_headline_site_metrics()
+        _save_json_setting("last_headline_site_metrics", headline_site_metrics)
+        append_scrape_outcome_history(run_metrics, headline_site_metrics)
+        fetch_report = _build_fetch_report(run_metrics, headline_site_metrics, ollama_state)
+        _save_json_setting("last_fetch_report", fetch_report)
+        logging.info(
+            "[Metrics] Run stored=%s input=%s latest_edition=%s %s",
+            run_metrics["totals"]["stored"],
+            run_metrics["totals"]["input_articles"],
+            headline_site_metrics.get("edition", {}).get("date"),
+            headline_site_metrics.get("edition", {}).get("edition_type"),
+        )
+        _notify_fetch_report(fetch_report)
 
         # Notify n8n pipeline is done — triggers Ollama machine suspend
         _notify_n8n()
@@ -278,18 +749,27 @@ if __name__ == "__main__":
         db.create_all()
         # Only fetch on startup if enough time has passed
         if should_fetch_now():
-            run_all_fetches()
+            run_all_fetches(
+                run_full_pipeline=should_run_full_pipeline(
+                    last_fetch=get_last_fetch_time(),
+                )
+            )
         else:
             logging.info("Skipping startup fetch.")
 
     scheduler = BlockingScheduler()
     scheduler.add_job(
-        run_all_fetches,
-        trigger=CronTrigger(hour=SCHEDULE_HOURS, minute=0, timezone=TIMEZONE),
+        lambda: run_all_fetches(run_full_pipeline=should_run_full_pipeline()),
+        trigger=CronTrigger(hour=FETCH_SCHEDULE_HOURS, minute=0, timezone=TIMEZONE),
         id="fetch_job",
         name="Scheduled news fetch (America/New_York)",
         replace_existing=True
     )
 
-    logging.info(f"Scheduler running. Fetching at {SCHEDULE_HOURS} in {TIMEZONE}.")
+    logging.info(
+        "Scheduler running. Fetching at %s and running full pipeline at %s in %s.",
+        FETCH_SCHEDULE_HOURS,
+        FULL_PIPELINE_HOURS,
+        TIMEZONE,
+    )
     scheduler.start()

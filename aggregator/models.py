@@ -2,6 +2,7 @@
 # aggregator/models.py
 
 from . import db
+from .article_signals import is_roundup_article
 from datetime import datetime
 from pgvector.sqlalchemy import Vector
 from flask_login import UserMixin
@@ -94,7 +95,17 @@ class Article(db.Model):
     image_url  = db.Column(db.String)
     embedding  = db.Column(Vector(768))
     summary    = db.Column(db.Text)
+    deep_analysis = db.Column(db.Text)
     scrape_audited = db.Column(db.Boolean, default=False, nullable=False, server_default='false')
+    scrape_status = db.Column(db.String(32), nullable=False, default="pending", server_default='pending')
+    scrape_method = db.Column(db.String(255), nullable=True)
+    scrape_failure_reason = db.Column(db.String(1024), nullable=True)
+    scrape_http_status = db.Column(db.Integer, nullable=True)
+    grouping_match_method = db.Column(db.String(32), nullable=True)
+    grouping_confidence = db.Column(db.Float, nullable=True)
+    grouping_candidate_story_ids = db.Column(db.Text, nullable=True)
+    grouping_needs_review = db.Column(db.Boolean, default=False, nullable=False, server_default='false')
+    grouping_reviewed_at = db.Column(db.DateTime, nullable=True)
 
     topics = db.relationship("Topic", secondary=article_topics, back_populates="articles")
 
@@ -102,6 +113,14 @@ class Article(db.Model):
     def last_updated(self):
         """The publication date of this article."""
         return self.date
+
+    @property
+    def is_roundup(self):
+        return is_roundup_article(self.title, self.url)
+
+    @property
+    def has_usable_image(self):
+        return bool(self.image_url) and not self.is_roundup
 
 
 class AppSetting(db.Model):
@@ -199,5 +218,14 @@ class EditionStory(db.Model):
     story_id                = db.Column(db.Integer, db.ForeignKey('stories.id'), nullable=False)
     rank                    = db.Column(db.Integer, nullable=False)
     headline_score_at_publish = db.Column(db.Float, nullable=True)
+    has_updates             = db.Column(db.Boolean, nullable=False, default=False, server_default='false')
+    archived_image_path     = db.Column(db.String, nullable=True)
+    source_image_url        = db.Column(db.String, nullable=True)
+    image_credit_text       = db.Column(db.String(255), nullable=True)
+    image_download_status   = db.Column(db.String(32), nullable=True)
+    image_downloaded_at     = db.Column(db.DateTime, nullable=True)
+    image_width             = db.Column(db.Integer, nullable=True)
+    image_height            = db.Column(db.Integer, nullable=True)
+    image_bytes             = db.Column(db.Integer, nullable=True)
 
     story = db.relationship('Story', back_populates='edition_stories', lazy='joined', overlaps="edition_stories,story_ref")

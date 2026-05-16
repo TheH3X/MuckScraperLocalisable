@@ -63,6 +63,42 @@
             overflow: hidden;
             box-shadow: var(--shadow);
         }
+        .card + .card { margin-top: 24px; }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 14px;
+            margin-bottom: 24px;
+        }
+        .metric {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 16px 18px;
+            box-shadow: var(--shadow);
+        }
+        .metric-label {
+            color: var(--text-muted);
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+        .metric-value {
+            font-size: 28px;
+            font-weight: 800;
+        }
+        .section-title {
+            font-size: 16px;
+            font-weight: 800;
+            margin-bottom: 12px;
+        }
+        .section-subtitle {
+            color: var(--text-muted);
+            font-size: 13px;
+            margin-bottom: 16px;
+        }
         table { width: 100%; border-collapse: collapse; }
         th {
             text-align: left;
@@ -123,23 +159,133 @@
         <button type="submit" class="audit-btn">⚡ Run Scrape Audit Now</button>
     </form>
 
+    <div class="metrics-grid">
+        {% for label, value in [
+            ('Success', status_counts.get('success', 0)),
+            ('Fallback', status_counts.get('fallback', 0)),
+            ('Blocked', status_counts.get('blocked', 0)),
+            ('Failed', status_counts.get('failed', 0)),
+            ('Skipped', status_counts.get('skipped', 0)),
+            ('Retry Cache', retry_cache_domain_count + retry_cache_url_count)
+        ] %}
+        <div class="metric">
+            <div class="metric-label">{{ label }}</div>
+            <div class="metric-value">{{ value }}</div>
+        </div>
+        {% endfor %}
+    </div>
+
     <div class="card">
+        <div style="padding: 20px 20px 0 20px;">
+            <div class="section-title">Recent Problem Domains</div>
+            <div class="section-subtitle">Worst blocked, failed, and fallback domains from the last {{ telemetry_window_hours }} hours.</div>
+        </div>
+        {% if recent_problem_domains %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Domain</th>
+                    <th>Issues</th>
+                    <th>Blocked</th>
+                    <th>Failed</th>
+                    <th>Fallback</th>
+                    <th>Success</th>
+                    <th>Last Seen</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in recent_problem_domains %}
+                <tr>
+                    <td><strong>{{ row.domain }}</strong></td>
+                    <td>{{ row.issue_total }}</td>
+                    <td>{{ row.blocked }}</td>
+                    <td>{{ row.failed }}</td>
+                    <td>{{ row.fallback }}</td>
+                    <td>{{ row.success }}</td>
+                    <td style="color: var(--text-faint); white-space: nowrap;">{{ row.last_seen.strftime('%Y-%m-%d %H:%M') if row.last_seen else '—' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty">No recent scrape telemetry yet.</div>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <div style="padding: 20px 20px 0 20px;">
+            <div class="section-title">Retry Cache</div>
+            <div class="section-subtitle">{{ retry_cache_domain_count }} deferred domains and {{ retry_cache_url_count }} deferred URLs are currently cached.</div>
+        </div>
+        {% if retry_cache_domains or retry_cache_urls %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Scope</th>
+                    <th>Target</th>
+                    <th>Status</th>
+                    <th>Failures</th>
+                    <th>Reason</th>
+                    <th>Defer Until</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in retry_cache_domains %}
+                <tr>
+                    <td>Domain</td>
+                    <td><strong>{{ row.domain }}</strong></td>
+                    <td>{{ row.status or '—' }}</td>
+                    <td>{{ row.failure_count }}</td>
+                    <td style="color: var(--text-muted);">{{ row.failure_reason or '—' }}</td>
+                    <td style="color: var(--text-faint); white-space: nowrap;">{{ row.defer_until or '—' }}</td>
+                </tr>
+                {% endfor %}
+                {% for row in retry_cache_urls %}
+                <tr>
+                    <td>URL</td>
+                    <td style="max-width: 320px; overflow-wrap: anywhere;"><strong>{{ row.url }}</strong></td>
+                    <td>{{ row.status or '—' }}</td>
+                    <td>{{ row.failure_count }}</td>
+                    <td style="color: var(--text-muted);">{{ row.failure_reason or '—' }}</td>
+                    <td style="color: var(--text-faint); white-space: nowrap;">{{ row.defer_until or '—' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty">Retry cache is empty. It will populate after real scrape failures hit the new cooldown logic.</div>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <div style="padding: 20px 20px 0 20px;">
+            <div class="section-title">Blocklist Entries</div>
+            <div class="section-subtitle">Recent scrape counts are shown per blocked domain for the last {{ telemetry_window_hours }} hours.</div>
+        </div>
         {% if entries %}
         <table>
             <thead>
                 <tr>
                     <th>Domain</th>
                     <th>Reason</th>
+                    <th>24h Telemetry</th>
                     <th>Added</th>
                     <th>Type</th>
                     <th></th>
                 </tr>
             </thead>
             <tbody>
-                {% for entry in entries %}
+                {% for row in entries %}
+                {% set entry = row.entry %}
                 <tr>
                     <td><strong>{{ entry.domain }}</strong></td>
                     <td style="color: var(--text-muted);">{{ entry.reason }}</td>
+                    <td style="color: var(--text-muted);">
+                        b {{ row.blocked }} · f {{ row.failed }} · fb {{ row.fallback }} · ok {{ row.success }}
+                        <div style="color: var(--text-faint); font-size: 12px; margin-top: 4px;">
+                            Last seen: {{ row.last_seen.strftime('%Y-%m-%d %H:%M') if row.last_seen else '—' }}
+                        </div>
+                    </td>
                     <td style="color: var(--text-faint); white-space: nowrap;">
                         {{ entry.added_at.strftime('%Y-%m-%d') if entry.added_at else '—' }}
                     </td>

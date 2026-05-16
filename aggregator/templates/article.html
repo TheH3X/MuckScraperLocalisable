@@ -181,6 +181,76 @@
             letter-spacing: 0.5px;
         }
 
+        .scrape-panel {
+            margin: 20px 0 28px;
+            padding: 16px 18px;
+            border-radius: 14px;
+            border: 1px solid var(--border);
+            background: var(--summary-bg);
+        }
+
+        .scrape-panel-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 10px;
+        }
+
+        .scrape-label {
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-faint);
+        }
+
+        .scrape-chip {
+            display: inline-flex;
+            align-items: center;
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            background: rgba(0,0,0,0.03);
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .scrape-chip.scrape-success { color: #1d6f42; border-color: rgba(29,111,66,0.25); background: rgba(29,111,66,0.08); }
+        .scrape-chip.scrape-fallback { color: #8a5a00; border-color: rgba(138,90,0,0.25); background: rgba(138,90,0,0.09); }
+        .scrape-chip.scrape-blocked,
+        .scrape-chip.scrape-failed { color: #a33636; border-color: rgba(163,54,54,0.25); background: rgba(163,54,54,0.08); }
+        .scrape-chip.scrape-skipped { color: #666; border-color: rgba(102,102,102,0.25); background: rgba(102,102,102,0.08); }
+
+        .scrape-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 10px 16px;
+        }
+
+        .scrape-item {
+            min-width: 0;
+        }
+
+        .scrape-key {
+            display: block;
+            margin-bottom: 4px;
+            font-size: 10px;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-faint);
+        }
+
+        .scrape-value {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 12px;
+            color: var(--text-muted);
+            word-break: break-word;
+        }
+
         .summary-bullets {
             margin: 8px 0 1em 1.5em;
             list-style: disc;
@@ -323,46 +393,62 @@
 
         <h1><a href="{{ article.url }}" target="_blank" style="color: inherit; text-decoration: none;">{{ article.title }}</a></h1>
 
-        {% if article.image_url %}
+        {% if article.has_usable_image %}
             <img src="{{ article.image_url }}" alt="Article Image" style="width: 100%; border-radius: 16px; margin-bottom: 32px; box-shadow: var(--shadow);">
         {% endif %}
 
         <hr class="divider">
 
         <div class="summary">
-            <div class="summary-label">AI Summary</div>
+            <div class="summary-label">Executive Summary</div>
             {% if article.summary %}
-                {% set in_bullets = [] %}
                 {% for line in article.summary.split('\n') %}
                     {% set l = line.strip() %}
                     {% if l %}
-                        {% if l.startswith('•') %}
-                            {% if not in_bullets %}
-                                <ul class="summary-bullets">
-                                {% set _ = in_bullets.append(1) %}
-                            {% endif %}
-                            <li>{{ l[1:].strip() }}</li>
-                        {% else %}
-                            {% if in_bullets %}
-                                </ul>
-                                {% set _ = in_bullets.clear() %}
-                            {% endif %}
-                            {% if ':' in l and l.split(':')[0].strip()|length < 30 %}
-                                {% set label = l.split(':', 1)[0].strip() %}
-                                {% set rest = l.split(':', 1)[1].strip() %}
-                                <p><strong class="summary-section-label">{{ label }}:</strong> {{ rest }}</p>
-                            {% else %}
-                                <p>{{ l }}</p>
-                            {% endif %}
-                        {% endif %}
+                        <p>{{ l }}</p>
                     {% endif %}
                 {% endfor %}
-                {% if in_bullets %}</ul>{% endif %}
             {% elif not ollama_online %}
                 <p style="font-style: italic; color: var(--text-muted);">Summary will be generated when Ollama is back online. This article has been added to the queue.</p>
             {% else %}
                 <p style="font-style: italic; color: var(--text-muted);">No summary has been generated yet. Use the summarize action to process this article.</p>
             {% endif %}
+        </div>
+
+        <div class="scrape-panel">
+            {% set scrape_status = article.scrape_status or 'pending' %}
+            <div class="scrape-panel-header">
+                <span class="scrape-label">Scrape Telemetry</span>
+                <span class="scrape-chip scrape-{{ scrape_status }}">
+                    {% if scrape_status == 'success' %}
+                        Scrape OK
+                    {% elif scrape_status == 'fallback' %}
+                        Fallback Used
+                    {% elif scrape_status == 'blocked' %}
+                        Blocked
+                    {% elif scrape_status == 'skipped' %}
+                        Skipped
+                    {% elif scrape_status == 'failed' %}
+                        Failed
+                    {% else %}
+                        Pending
+                    {% endif %}
+                </span>
+            </div>
+            <div class="scrape-grid">
+                <div class="scrape-item">
+                    <span class="scrape-key">Method</span>
+                    <span class="scrape-value">{{ article.scrape_method or 'n/a' }}</span>
+                </div>
+                <div class="scrape-item">
+                    <span class="scrape-key">HTTP Status</span>
+                    <span class="scrape-value">{{ article.scrape_http_status or 'n/a' }}</span>
+                </div>
+                <div class="scrape-item" style="grid-column: 1 / -1;">
+                    <span class="scrape-key">Failure Reason</span>
+                    <span class="scrape-value">{{ article.scrape_failure_reason or 'n/a' }}</span>
+                </div>
+            </div>
         </div>
 
         <div class="article-body">

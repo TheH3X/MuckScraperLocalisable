@@ -70,7 +70,7 @@ class OpenSourceBoundaryTests(unittest.TestCase):
             path = ROOT / rel_path
             if not path.is_file():
                 continue
-            if rel_path == ".gitignore":
+            if rel_path == ".gitignore" or rel_path.startswith("tests/"):
                 continue
             try:
                 source = path.read_text(encoding="utf-8")

@@ -3,6 +3,38 @@
 All notable changes to MuckScraper are documented here.
  
 ---
+
+## [0.5.0] - 2026-05-16
+
+### Added
+
+- **Scrape telemetry expansion**:
+  - persisted scrape status, method, failure reason, and HTTP status now flow through ingestion, retries, and admin tooling
+  - scrape outcome history is now stored over time for operational review
+- **Edition publish dedupe**:
+  - same-event headline candidates are filtered before publish
+  - edition backfill continues down the ranked list to preserve edition size after duplicate removals
+- **Archived edition images**:
+  - edition-story image metadata is stored on `EditionStory`
+  - archived local copies can be generated from story article images for stable published output
+- **Grouping review fields** on articles to support higher-scrutiny grouping workflows
+
+### Changed
+
+- Scraper retry behavior now keeps degraded domains cooled down even when a URL-level fallback succeeds
+- High-cost scrape variant fan-out is skipped after strong terminal failures like `401`, `403`, `404`, and `410`
+- Scheduler startup catch-up logic now waits for the next scheduled run unless a scheduled slot was actually missed
+- `process_current_edition()` skips unchanged stable stories earlier instead of repeatedly reconsidering them for summary work
+- Edition dedupe matching was tightened to reduce false positives driven by generic political/process words
+
+### Fixed
+
+- Real same-event duplicate clusters making it into the same published edition
+- Excessive retry churn on chronically blocked scrape domains
+- Misleading public docs and repo-map references to deployment-specific paths
+- Confusing Alembic migration filename mismatch for the archived-edition-image revision
+
+---
  
 ## [0.4.0] - 2026-05-04
  

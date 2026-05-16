@@ -70,4 +70,4 @@ def register_filters(app):
                 return content.strip()
         except Exception:
             pass
-        return None
+        return summary.strip()
