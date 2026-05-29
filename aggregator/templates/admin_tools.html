@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html data-theme="light">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon_32.png') }}">
+    <link rel="icon" type="image/png" sizes="128x128" href="{{ url_for('static', filename='favicon_128.png') }}">
+    <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='favicon_192.png') }}">
+    <link rel="icon" type="image/png" sizes="512x512" href="{{ url_for('static', filename='favicon_512.png') }}">
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='favicon_180.png') }}">
+    <title>Admin Tools — MuckScraper</title>
+    <style>
+        :root {
+            --accent: #5a5f52;
+            --accent-light: #7a8172;
+            --accent-dark: #464b40;
+            --broad: #b08a22;
+            --broad-dark: #8d6d18;
+            --broad-soft: #fbf3dc;
+            --danger: #9a725b;
+            --danger-dark: #7b5a47;
+            --danger-soft: #f6eee9;
+            --bg: #f8f9fa;
+            --surface: #ffffff;
+            --topbar-bg: #1e1e2e;
+            --topbar-text: #cdd6f4;
+            --text: #1a1a1a;
+            --text-muted: #555;
+            --text-faint: #888;
+            --border: #eef0f2;
+            --warning-bg: #f1f3f4;
+            --warning-border: #d7dcdf;
+            --shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        [data-theme="dark"] {
+            --bg: #0f0f17;
+            --surface: #1a1a26;
+            --text: #e2e8f0;
+            --text-muted: #a0aec0;
+            --text-faint: #718096;
+            --border: #2d2d3f;
+            --broad-soft: rgba(176, 138, 34, 0.18);
+            --danger-soft: rgba(154, 114, 91, 0.18);
+            --warning-bg: #1d2430;
+            --warning-border: #364152;
+            --shadow: 0 4px 12px rgba(0,0,0,0.25);
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+        }
+        .topbar {
+            background: var(--topbar-bg);
+            padding: 16px 40px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .topbar-left { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+        .topbar a { color: #89b4fa; text-decoration: none; font-size: 14px; font-weight: 600; }
+        .topbar-title { color: var(--topbar-text); font-size: 18px; font-weight: 800; }
+        .theme-toggle {
+            background: none;
+            border: 1px solid rgba(255,255,255,0.2);
+            color: var(--topbar-text);
+            padding: 6px 14px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .container { max-width: 1160px; margin: 40px auto; padding: 0 20px 48px; }
+        h1 { font-size: 32px; font-weight: 800; margin-bottom: 10px; }
+        .subtitle {
+            color: var(--text-muted);
+            font-size: 15px;
+            margin-bottom: 28px;
+            max-width: 780px;
+            line-height: 1.55;
+        }
+        .warning-banner {
+            margin-bottom: 28px;
+            padding: 16px 18px;
+            border-radius: 14px;
+            background: var(--warning-bg);
+            border: 1px solid var(--warning-border);
+            color: var(--text);
+            font-size: 14px;
+            line-height: 1.55;
+        }
+        .warning-banner strong { color: var(--danger-dark); display: block; margin-bottom: 8px; font-weight: 800; }
+        .warning-banner p + p { margin-top: 10px; }
+        .section {
+            margin-bottom: 28px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            box-shadow: var(--shadow);
+            overflow: hidden;
+        }
+        .section-head {
+            padding: 20px 22px 16px;
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(180deg, rgba(90, 95, 82, 0.08), rgba(90, 95, 82, 0.02));
+        }
+        .section-title {
+            font-size: 17px;
+            font-weight: 800;
+            margin-bottom: 6px;
+        }
+        .section-copy {
+            color: var(--text-muted);
+            font-size: 14px;
+            line-height: 1.55;
+            max-width: 780px;
+        }
+        .tool-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 0;
+        }
+        .tool-card {
+            padding: 18px 20px 20px;
+            border-right: 1px solid var(--border);
+            border-bottom: 1px solid var(--border);
+        }
+        .tool-card:nth-child(3n) { border-right: none; }
+        .tool-card-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 16px;
+            font-weight: 800;
+            margin-bottom: 8px;
+        }
+        .tool-card p {
+            color: var(--text-muted);
+            font-size: 14px;
+            line-height: 1.55;
+            margin-bottom: 14px;
+            min-height: 66px;
+        }
+        .meta-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 14px;
+        }
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            border-radius: 999px;
+            padding: 5px 10px;
+            background: rgba(90, 95, 82, 0.12);
+            color: var(--accent-dark);
+        }
+        .badge-danger {
+            background: var(--danger-soft);
+            color: var(--danger-dark);
+            border: 1px solid rgba(154, 114, 91, 0.22);
+        }
+        .badge-broad {
+            background: var(--broad-soft);
+            color: var(--broad-dark);
+            border: 1px solid rgba(176, 138, 34, 0.22);
+        }
+        .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .btn:hover { background: var(--accent-dark); }
+        .btn:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
+        .btn-secondary {
+            background: transparent;
+            color: var(--accent);
+            border: 1px solid var(--border);
+        }
+        .btn-secondary:hover {
+            border-color: var(--accent);
+            color: var(--accent-dark);
+            background: rgba(90, 95, 82, 0.05);
+        }
+        .btn-danger {
+            background: var(--danger);
+        }
+        .btn-danger:hover { background: var(--danger-dark); }
+        .btn-broad {
+            background: var(--broad);
+            color: white;
+        }
+        .btn-broad:hover { background: var(--broad-dark); }
+        .status-box {
+            margin-top: 10px;
+            padding: 12px 14px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: rgba(90, 95, 82, 0.05);
+        }
+        .status-line {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 6px;
+        }
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            border-radius: 999px;
+            padding: 5px 10px;
+            border: 1px solid var(--border);
+            background: var(--surface);
+        }
+        .status-pill.running {
+            background: var(--broad-soft);
+            color: var(--broad-dark);
+            border-color: rgba(176, 138, 34, 0.25);
+        }
+        .status-pill.success {
+            background: rgba(90, 95, 82, 0.12);
+            color: var(--accent-dark);
+            border-color: rgba(90, 95, 82, 0.22);
+        }
+        .status-pill.error {
+            background: var(--danger-soft);
+            color: var(--danger-dark);
+            border-color: rgba(154, 114, 91, 0.22);
+        }
+        .status-pill.idle {
+            color: var(--text-muted);
+        }
+        .status-copy {
+            color: var(--text-muted);
+            font-size: 13px;
+            line-height: 1.45;
+        }
+        .status-meta {
+            color: var(--text-faint);
+            font-size: 12px;
+            line-height: 1.45;
+            margin-top: 6px;
+        }
+        @media (max-width: 980px) {
+            .tool-card:nth-child(3n) { border-right: 1px solid var(--border); }
+            .tool-card:nth-child(2n) { border-right: none; }
+        }
+        @media (max-width: 760px) {
+            .topbar { padding: 16px 18px; }
+            .container { margin: 28px auto; padding: 0 14px 32px; }
+            .tool-list { grid-template-columns: 1fr; }
+            .tool-card { border-right: none; }
+        }
+    </style>
+</head>
+<body>
+<div class="topbar">
+    <div class="topbar-left">
+        <span class="topbar-title">MuckScraper</span>
+        <a href="{{ url_for('admin.list_articles') }}">← Back to Feed</a>
+    </div>
+    <div class="topbar-left">
+        <a href="{{ url_for('auth.logout') }}">Logout</a>
+        <button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()">Dark Mode</button>
+    </div>
+</div>
+
+<div class="container">
+    <h1>Admin Tools</h1>
+    <p class="subtitle">This page centralizes operational tasks, repair jobs, diagnostics, and maintenance actions. Routine controls are separated from broad-impact actions so the feed page stays focused on reviewing stories.</p>
+
+    <div class="warning-banner">
+        <strong>WARNING!</strong>
+        <p>Tools marked with <span class="badge badge-danger">⚠ Danger</span> can rewrite large amounts of stored data, change grouping or summaries site-wide, or make troubleshooting harder if run casually. Use those only when you have a concrete repair goal.</p>
+        <p>Tools marked with <span class="badge badge-broad">⚠ Broad change</span> are less destructive, but they still update many existing records at once and can change how content is categorized or interpreted.</p>
+    </div>
+
+    <div class="section">
+        <div class="section-head">
+            <div class="section-title">Operational</div>
+            <div class="section-copy">Short-running actions you might use during normal day-to-day monitoring or when the AI side is offline or behind.</div>
+        </div>
+        <div class="tool-list">
+            <div class="tool-card">
+                <div class="tool-card-title">Wake Ollama</div>
+                <p>Sends the Wake-on-LAN packet to the Ollama machine so AI tasks can resume if the box is asleep.</p>
+                <div class="meta-row">
+                    <span class="badge">Safe</span>
+                </div>
+                <form method="POST" action="{{ url_for('admin.wake_ollama') }}">
+                    <input type="hidden" name="next" value="{{ url_for('admin.tools_page') }}">
+                    <button type="submit" class="btn">Wake Ollama</button>
+                </form>
+            </div>
+            <div class="tool-card">
+                <div class="tool-card-title">Run AI Catch-up</div>
+                <p>Fills in missing AI outputs for existing stories and articles without running a full scheduled pipeline.</p>
+                <div class="meta-row">
+                    <span class="badge">Safe</span>
+                </div>
+                <form method="POST" action="{{ url_for('admin.ollama_catchup_route') }}">
+                    <input type="hidden" name="next" value="{{ url_for('admin.tools_page') }}">
+                    <button type="submit" class="btn">Run AI Catch-up</button>
+                </form>
+            </div>
+            <div class="tool-card">
+                <div class="tool-card-title">Scrape Missing</div>
+                <p>Attempts to fetch readable article content for recent articles that are missing content or still marked failed/pending.</p>
+                <div class="meta-row">
+                    <span class="badge">Safe</span>
+                </div>
+                <form method="POST" action="{{ url_for('admin.scrape_all_missing') }}">
+                    <input type="hidden" name="next" value="{{ url_for('admin.tools_page') }}">
+                    <button type="submit" class="btn">Scrape Missing</button>
+                </form>
+            </div>
+            <div class="tool-card">
+                <div class="tool-card-title">Reindex Search</div>
+                <p>Rebuilds the Meilisearch story and article indexes from the database so admin search stays fast and can search both stories and articles.</p>
+                <div class="meta-row">
+                    <span class="badge">Maintenance</span>
+                </div>
+                <button type="button" class="btn" id="reindex-search-btn" onclick="startSearchReindex()">Reindex Search</button>
+                <div class="status-box" id="reindex-search-status-box">
+                    <div class="status-line">
+                        <span class="status-pill idle" id="reindex-search-state">Idle</span>
+                    </div>
+                    <div class="status-copy" id="reindex-search-message">Search index has not been rebuilt in this app session yet.</div>
+                    <div class="status-meta" id="reindex-search-meta"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-head">
+            <div class="section-title">Content Repair</div>
+            <div class="section-copy">Use these when existing stories need repair or normalization after a ranking, grouping, topic, or outlet-bias issue.</div>
+        </div>
+        <div class="tool-list">
+            <div class="tool-card">
+                <div class="tool-card-title">Reclassify Topics</div>
+                <p>Re-runs topic classification so stored stories/articles can be reassigned to better topics after prompt or model changes.</p>
+                <div class="meta-row">
+                    <span class="badge badge-broad">⚠ Broad change</span>
+                </div>
+                <form method="POST" action="{{ url_for('admin.reclassify_articles') }}">
+                    <input type="hidden" name="next" value="{{ url_for('admin.tools_page') }}">
+                    <button type="submit" class="btn btn-broad">Reclassify Topics</button>
+                </form>
+            </div>
+            <div class="tool-card">
+                <div class="tool-card-title">Rebuild Story Grouping</div>
+                <p>Forces articles back through grouping logic. Use this only when story clustering is clearly wrong and you want to rebuild it.</p>
+                <div class="meta-row">
+                    <span class="badge badge-danger">⚠ Danger</span>
+                </div>
+                <form method="POST" action="{{ url_for('admin.force_regroup') }}">
+                    <input type="hidden" name="next" value="{{ url_for('admin.tools_page') }}">
+                    <button type="submit" class="btn btn-danger">Rebuild Story Grouping</button>
+                </form>
+            </div>
+            <div class="tool-card">
+                <div class="tool-card-title">Rebuild Story Summaries</div>
+                <p>Clears and regenerates summaries/deep reports across stories. Useful after major prompt or scraper improvements.</p>
+                <div class="meta-row">
+                    <span class="badge badge-danger">⚠ Danger</span>
+                </div>
+                <form method="POST" action="{{ url_for('admin.force_resummarize') }}">
+                    <input type="hidden" name="next" value="{{ url_for('admin.tools_page') }}">
+                    <button type="submit" class="btn btn-danger">Rebuild Story Summaries</button>
+                </form>
+            </div>
+            <div class="tool-card">
+                <div class="tool-card-title">Sync AllSides Ratings</div>
+                <p>Refreshes outlet bias from the built-in AllSides mapping and propagates updated outlet scores to related articles.</p>
+                <div class="meta-row">
+                    <span class="badge">Maintenance</span>
+                </div>
+                <form method="POST" action="{{ url_for('admin.sync_allsides') }}">
+                    <input type="hidden" name="next" value="{{ url_for('admin.tools_page') }}">
+                    <button type="submit" class="btn">Sync AllSides Ratings</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-head">
+            <div class="section-title">Scraper Diagnostics</div>
+            <div class="section-copy">Navigate to live scraper telemetry or run targeted auditing when you suspect blocklist or content-quality problems.</div>
+        </div>
+        <div class="tool-list">
+            <div class="tool-card">
+                <div class="tool-card-title">Scrape Blocklist</div>
+                <p>Opens the dedicated blocklist page with recent domain trouble, retry cache information, and unblock controls.</p>
+                <div class="meta-row">
+                    <span class="badge">Navigation</span>
+                </div>
+                <a href="{{ url_for('admin.scrape_blocklist') }}" class="btn btn-secondary">Open Scrape Blocklist</a>
+            </div>
+            <div class="tool-card">
+                <div class="tool-card-title">Audit Stored Scrapes</div>
+                <p>Re-audits existing stored article content to catch bad login pages, duplicate junk, or weak content that should be repaired.</p>
+                <div class="meta-row">
+                    <span class="badge badge-broad">⚠ Broad change</span>
+                </div>
+                <form method="POST" action="{{ url_for('admin.audit_scrapes') }}">
+                    <input type="hidden" name="next" value="{{ url_for('admin.tools_page') }}">
+                    <button type="submit" class="btn btn-broad">Audit Stored Scrapes</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-head">
+            <div class="section-title">Data Maintenance</div>
+            <div class="section-copy">These actions change canonical stored data and should be used carefully, ideally when you already know the inconsistency you are fixing.</div>
+        </div>
+        <div class="tool-list">
+            <div class="tool-card">
+                <div class="tool-card-title">Merge Duplicate Outlets</div>
+                <p>Renames outlets to their normalized forms and merges duplicates, reassigning articles to a single canonical outlet.</p>
+                <div class="meta-row">
+                    <span class="badge badge-danger">⚠ Danger</span>
+                </div>
+                <div class="btn-row">
+                    <button onclick="runMergeOutlets()" class="btn btn-danger" type="button">Merge Duplicate Outlets</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function applyTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        const btn = document.getElementById('theme-toggle');
+        btn.textContent = theme === 'dark' ? 'Light Mode' : 'Dark Mode';
+    }
+
+    function toggleTheme() {
+        const current = document.documentElement.getAttribute('data-theme');
+        const next = current === 'dark' ? 'light' : 'dark';
+        localStorage.setItem('muckscraper-theme', next);
+        applyTheme(next);
+    }
+
+    function runMergeOutlets() {
+        if (!confirm('Merge and rename duplicate outlets? This changes stored outlet records and article associations.')) return;
+        fetch('{{ url_for("admin.merge_outlets") }}', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'ok') {
+                    alert(
+                        'Done.\n' +
+                        'Outlets renamed: ' + data.renamed + '\n' +
+                        'Duplicate outlets removed: ' + data.outlets_deleted + '\n' +
+                        'Articles reassigned: ' + data.articles_reassigned
+                    );
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            })
+            .catch(e => alert('Request failed: ' + e));
+    }
+
+    function formatStatusTimestamp(value) {
+        if (!value) return '';
+        const date = new Date(value + 'Z');
+        return date.toLocaleString();
+    }
+
+    function applySearchReindexStatus(status) {
+        const button = document.getElementById('reindex-search-btn');
+        const state = document.getElementById('reindex-search-state');
+        const message = document.getElementById('reindex-search-message');
+        const meta = document.getElementById('reindex-search-meta');
+
+        const currentStatus = status.status || 'idle';
+        state.className = `status-pill ${currentStatus}`;
+        state.textContent = currentStatus === 'running'
+            ? 'Working'
+            : currentStatus === 'success'
+                ? 'Successful'
+                : currentStatus === 'error'
+                    ? 'Failed'
+                    : 'Idle';
+
+        message.textContent = status.message || 'No search reindex status available.';
+
+        const details = [];
+        if (status.started_at) details.push(`Started: ${formatStatusTimestamp(status.started_at)}`);
+        if (status.finished_at) details.push(`Finished: ${formatStatusTimestamp(status.finished_at)}`);
+        if (status.story_documents !== null && status.story_documents !== undefined) {
+            details.push(`Stories: ${status.story_documents}`);
+        }
+        if (status.article_documents !== null && status.article_documents !== undefined) {
+            details.push(`Articles: ${status.article_documents}`);
+        }
+        meta.textContent = details.join(' · ');
+
+        if (currentStatus === 'running') {
+            button.disabled = true;
+            button.textContent = 'Reindex Running...';
+        } else {
+            button.disabled = false;
+            button.textContent = 'Reindex Search';
+        }
+    }
+
+    function pollSearchReindexStatus() {
+        fetch('{{ url_for("admin.reindex_search_status") }}')
+            .then(r => r.json())
+            .then(applySearchReindexStatus)
+            .catch(() => {
+                applySearchReindexStatus({
+                    status: 'error',
+                    message: 'Could not load reindex status.',
+                });
+            });
+    }
+
+    function startSearchReindex() {
+        const button = document.getElementById('reindex-search-btn');
+        button.disabled = true;
+        button.textContent = 'Starting...';
+
+        fetch('{{ url_for("admin.reindex_search") }}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        })
+            .then(async (response) => {
+                const data = await response.json();
+                applySearchReindexStatus(data.status || {});
+                if (!response.ok && response.status !== 409) {
+                    throw new Error(data.message || 'Failed to start search reindex.');
+                }
+            })
+            .catch((error) => {
+                applySearchReindexStatus({
+                    status: 'error',
+                    message: error.message || 'Failed to start search reindex.',
+                });
+            });
+    }
+
+    const savedTheme = localStorage.getItem('muckscraper-theme') || 'light';
+    applyTheme(savedTheme);
+    pollSearchReindexStatus();
+    setInterval(pollSearchReindexStatus, 5000);
+</script>
+</body>
+</html>

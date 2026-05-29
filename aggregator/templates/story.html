@@ -9,12 +9,12 @@
     <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='favicon_192.png') }}">
     <link rel="icon" type="image/png" sizes="512x512" href="{{ url_for('static', filename='favicon_512.png') }}">
     <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='favicon_180.png') }}">
-    <title>{{ story.headline or story.title }} — MuckScraper</title>
+    <title>{{ story.display_headline }} — MuckScraper</title>
     <style>
         :root {
-            --accent:        #a43cb5;
-            --accent-light:  #c06ed0;
-            --accent-dark:   #7a2d88;
+            --accent:        #5a5f52;
+            --accent-light:  #7a8172;
+            --accent-dark:   #464b40;
             --bg:            #f8f9fa;
             --surface:       #ffffff;
             --text:          #1a1a1a;
@@ -236,7 +236,8 @@
 
 <div class="container">
 <div class="story-card">
-	    <h1>{{ story.headline or story.title }}</h1>
+        <div id="ai-task-status" style="display:none; margin-bottom:20px; padding:12px 14px; border-radius:12px; border:1px solid var(--border); background:rgba(0,0,0,0.03); color:var(--text-muted); font-size:13px;"></div>
+		    <h1>{{ story.display_headline }}</h1>
 
     <div style="font-size: 12px; font-weight: 600; color: var(--text-faint); margin-bottom: 32px; display: flex; align-items: center; gap: 12px;">
         <span>{{ story.articles|length }} SOURCES</span>
@@ -274,9 +275,7 @@
             <div class="analysis-label" style="display: flex; justify-content: space-between; align-items: center;">
                 <span>Executive Summary</span>
                 {% if ollama_online and (not story.summary or story.summary == story.title or not story.deep_report) %}
-                    <form method="POST" action="{{ url_for('admin.summarize_story_route', story_id=story.id) }}" style="display: inline;">
-                        <button type="submit" class="btn-view" style="cursor: pointer; padding: 4px 12px; font-size: 10px;">Summarize Story</button>
-                    </form>
+                    <button type="button" class="btn-view" style="cursor: pointer; padding: 4px 12px; font-size: 10px;" onclick="startAiTask('story_summary', {{ story.id }}, this)">Summarize Story</button>
                 {% endif %}
             </div>
             {% if story.summary %}
@@ -300,7 +299,12 @@
         </div>
 
         <div class="analysis-box">
-            <div class="analysis-label">Multi-Source Analysis</div>
+            <div class="analysis-label" style="display: flex; justify-content: space-between; align-items: center;">
+                <span>Multi-Source Analysis</span>
+                {% if ollama_online and story.articles|length >= 2 and not story.deep_report %}
+                    <button type="button" class="btn-view" style="cursor: pointer; padding: 4px 12px; font-size: 10px;" onclick="startAiTask('story_deep_report', {{ story.id }}, this)">Analyze Story</button>
+                {% endif %}
+            </div>
             {% if story.deep_report %}
                 <div class="analysis-content">
                     {% for line in story.deep_report.split('\n') %}
@@ -357,9 +361,7 @@
                         <a href="{{ url_for('public.view_article', article_id=article.id) }}" class="btn-view">Read Summary & Text →</a>
                         
                         {% if not article.summary and ollama_online %}
-                        <form method="POST" action="{{ url_for('admin.summarize_article_route', article_id=article.id) }}" style="display: inline;">
-                            <button type="submit" class="btn-view" style="cursor: pointer;">Summarize</button>
-                        </form>
+                            <button type="button" class="btn-view" style="cursor: pointer;" onclick="startAiTask('article_summary', {{ article.id }}, this)">Summarize</button>
                         {% endif %}
 
                         <a href="{{ article.url }}" target="_blank" style="font-size: 12px; color: var(--text-faint);">View Original Article</a>
@@ -386,6 +388,86 @@
 
     const savedTheme = localStorage.getItem('muckscraper-theme') || 'light';
     applyTheme(savedTheme);
+
+    const aiTaskStartUrl = "{{ url_for('admin.start_ai_task') }}";
+    const aiTaskStatusTemplate = "{{ url_for('admin.ai_task_status', task_type='TASK_TYPE', resource_id=999999) }}";
+    let activeAiTaskPoll = null;
+
+    function aiTaskStatusUrl(taskType, resourceId) {
+        return aiTaskStatusTemplate
+            .replace('TASK_TYPE', taskType)
+            .replace('999999', String(resourceId));
+    }
+
+    function renderAiTaskStatus(status, isError = false) {
+        const box = document.getElementById('ai-task-status');
+        if (!box) return;
+        box.style.display = 'block';
+        box.style.borderColor = isError ? 'rgba(154, 114, 91, 0.22)' : 'var(--border)';
+        box.style.background = isError ? 'rgba(154, 114, 91, 0.08)' : 'rgba(0,0,0,0.03)';
+        box.style.color = isError ? '#9a725b' : 'var(--text-muted)';
+        box.textContent = status.message || 'AI task update received.';
+    }
+
+    async function pollAiTask(taskType, resourceId, button) {
+        if (activeAiTaskPoll) {
+            clearInterval(activeAiTaskPoll);
+            activeAiTaskPoll = null;
+        }
+
+        const statusUrl = aiTaskStatusUrl(taskType, resourceId);
+        activeAiTaskPoll = setInterval(async () => {
+            const response = await fetch(statusUrl);
+            const status = await response.json();
+            renderAiTaskStatus(status, status.status === 'error');
+
+            if (status.status === 'success') {
+                clearInterval(activeAiTaskPoll);
+                activeAiTaskPoll = null;
+                window.location.reload();
+                return;
+            }
+
+            if (status.status === 'error') {
+                clearInterval(activeAiTaskPoll);
+                activeAiTaskPoll = null;
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = button.dataset.originalText;
+                }
+            }
+        }, 2000);
+    }
+
+    async function startAiTask(taskType, resourceId, button) {
+        if (button) {
+            button.dataset.originalText = button.textContent;
+            button.disabled = true;
+            button.textContent = 'Working...';
+        }
+
+        const response = await fetch(aiTaskStartUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                task_type: taskType,
+                resource_id: resourceId,
+            }),
+        });
+
+        const payload = await response.json();
+        renderAiTaskStatus(payload.status || payload, response.status >= 400);
+
+        if (!response.ok && response.status !== 409) {
+            if (button) {
+                button.disabled = false;
+                button.textContent = button.dataset.originalText;
+            }
+            return;
+        }
+
+        await pollAiTask(taskType, resourceId, button);
+    }
 
     // ── Local Timezone Conversion ──
     function convertToLocalTime() {

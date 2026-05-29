@@ -71,6 +71,14 @@ class Story(db.Model):
             return self.created_at
         return max((a.date for a in self.articles if a.date), default=self.created_at)
 
+    @property
+    def has_ai_headline(self):
+        return len(self.articles) >= 2 and bool((self.headline or "").strip())
+
+    @property
+    def display_headline(self):
+        return self.headline if self.has_ai_headline else self.title
+
 
 class Article(db.Model):
     __tablename__ = "articles"

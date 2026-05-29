@@ -3,6 +3,7 @@ import requests
 import logging
 from datetime import datetime, timedelta
 from flask import Blueprint, render_template, request, redirect, url_for, jsonify
+from aggregator.search import healthcheck as meili_healthcheck
 from aggregator.models import Article, Story, Topic, RawArticlePayload
 from aggregator.constants import TOPICS, AGGREGATORS
 
@@ -127,3 +128,8 @@ def view_article(article_id):
 @public.route("/ollama-status")
 def ollama_status():
     return jsonify({"online": check_ollama_status()})
+
+
+@public.route("/meili-status")
+def meili_status():
+    return jsonify({"online": meili_healthcheck()})

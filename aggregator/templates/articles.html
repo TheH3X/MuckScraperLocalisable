@@ -11,9 +11,9 @@
     <title>MuckScraper: All the muck that's fit to scrape</title>
     <style>
         :root {
-            --accent:        #a43cb5;
-            --accent-light:  #c06ed0;
-            --accent-dark:   #7a2d88;
+            --accent:        #5a5f52;
+            --accent-light:  #7a8172;
+            --accent-dark:   #464b40;
 
             /* Light mode */
             --bg:            #f8f9fa;
@@ -156,12 +156,12 @@
             font-size: 14px;
             font-weight: 500;
         }
-        
+
         .sidebar.collapsed .topic-block a {
             padding-left: 0;
             text-align: center;
         }
-        
+
         .sidebar.collapsed .topic-block {
              justify-content: center;
              padding: 4px 0;
@@ -190,11 +190,11 @@
             background: var(--sidebar-bg);
             flex-shrink: 0;
         }
-        
+
         .sidebar.collapsed .sidebar-footer { padding: 16px 0; align-items: center; }
         .sidebar.collapsed .sidebar-footer span { display: none; }
 
-        .ollama-status {
+        .sidebar-status {
             display: flex;
             align-items: center;
             gap: 10px;
@@ -215,7 +215,7 @@
 
         .status-dot.online  { background: #a6e3a1; box-shadow: 0 0 8px rgba(166, 227, 161, 0.4); }
         .status-dot.offline { background: #f38ba8; }
-        
+
         .sidebar-toggle-btn {
             background: none;
             border: none;
@@ -258,7 +258,7 @@
             padding: 24px 0;
             margin-bottom: 20px;
         }
-        
+
         [data-theme="dark"] .main-header {
             background: rgba(15, 15, 23, 0.85);
         }
@@ -325,7 +325,7 @@
             z-index: 100;
             animation: slideDown 0.2s ease-out;
         }
-        
+
         @keyframes slideDown {
             from { opacity: 0; transform: translateY(-10px); }
             to { opacity: 1; transform: translateY(0); }
@@ -347,7 +347,7 @@
             transition: all 0.2s;
         }
         .menu-item:hover { background: var(--btn-muted-bg); color: var(--accent); }
-        
+
         .menu-divider {
             height: 1px;
             background: var(--border);
@@ -384,7 +384,7 @@
             transition: all 0.2s;
             box-shadow: var(--shadow);
         }
-        
+
         .search-bar input:focus {
             outline: none;
             border-color: var(--accent);
@@ -433,7 +433,7 @@
             border: 1px solid var(--border);
             transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
-        
+
         .story:hover {
             transform: translateY(-4px);
             box-shadow: 0 12px 24px rgba(0,0,0,0.1);
@@ -453,18 +453,18 @@
             position: relative;
             overflow: hidden;
         }
-        
+
         .story-image img {
             width: 100%;
             height: 100%;
             object-fit: cover;
             transition: transform 0.5s ease;
         }
-        
+
         .story:hover .story-image img {
             transform: scale(1.05);
         }
-        
+
         .story-content {
             flex: 1;
             padding: 24px;
@@ -704,7 +704,7 @@
 
     <div class="sidebar" id="sidebar">
         <button class="sidebar-toggle-btn" id="sidebar-toggle" onclick="toggleSidebar()">«</button>
-        
+
         <div class="sidebar-inner">
             <div class="sidebar-content">
                 <div class="topic-block {% if not active_label and not is_multi_view %}active{% endif %}">
@@ -726,7 +726,7 @@
                     </a>
                 </div>
                 <hr class="sidebar-divider">
-                
+
                 <h2>Topics</h2>
 
                 {% for topic in topics %}
@@ -740,9 +740,13 @@
             </div>
 
             <div class="sidebar-footer">
-                <div class="ollama-status">
+                <div class="sidebar-status">
                     <div class="status-dot" id="ollama-dot"></div>
                     <span id="ollama-label">Ollama Status</span>
+                </div>
+                <div class="sidebar-status">
+                    <div class="status-dot" id="meili-dot"></div>
+                    <span id="meili-label">Meili Search Status</span>
                 </div>
             </div>
         </div>
@@ -751,67 +755,10 @@
     <div class="main">
         <div class="main-header">
             <h1>MuckScraper</h1>
-            
+
             <div class="header-controls">
                 <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙 Dark</button>
-                
-                <div class="action-menu-container">
-                    <button class="icon-btn" onclick="toggleActionMenu()">☰</button>
-                    <div class="action-dropdown" id="action-dropdown">
-                        <form method="POST" action="{{ url_for('admin.wake_ollama') }}">
-                            <input type="hidden" name="label" value="{{ active_label or '' }}">
-                            <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
-                            <button type="submit" class="menu-item">⚡ Wake Ollama</button>
-                        </form>
-                        <form method="POST" action="{{ url_for('admin.ollama_catchup_route') }}">
-                            <input type="hidden" name="label" value="{{ active_label or '' }}">
-                            <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
-                            <button type="submit" class="menu-item">↻ Ollama Catchup</button>
-                        </form>
-                        <form method="POST" action="{{ url_for('admin.scrape_all_missing') }}">
-                            <input type="hidden" name="label" value="{{ active_label or '' }}">
-                            <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
-                            <button type="submit" class="menu-item">↻ Scrape Missing</button>
-                        </form>
-                        
-                        <div class="menu-divider"></div>
-                        
-                        <form method="POST" action="{{ url_for('admin.force_regroup') }}">
-                            <input type="hidden" name="label" value="{{ active_label or '' }}">
-                            <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
-                            <button type="submit" class="menu-item">⚡ Force Re-group</button>
-                        </form>
-                        <form method="POST" action="{{ url_for('admin.force_resummarize') }}">
-                            <input type="hidden" name="label" value="{{ active_label or '' }}">
-                            <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
-                            <button type="submit" class="menu-item">⚡ Force Re-summarize</button>
-                        </form>
-                        <form method="POST" action="{{ url_for('admin.reclassify_articles') }}">
-                            <input type="hidden" name="label" value="{{ active_label or '' }}">
-                            <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
-                            <button type="submit" class="menu-item">↻ Reclassify Topics</button>
-                        </form>
-
-                        <form method="POST" action="{{ url_for('admin.sync_allsides') }}">
-                            <input type="hidden" name="label" value="{{ active_label or '' }}">
-                            <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
-                            <button type="submit" class="menu-item">🟢 Sync AllSides Ratings</button>
-                        </form>
-
-                        <button onclick="runMergeOutlets()" class="menu-item">🛠 Merge Duplicate Outlets</button>
-
-                        <div class="menu-divider"></div>
-
-                        <a href="/scrape-blocklist" class="menu-item" style="text-degree:none;">🚫 Scrape Blocklist</a>
-                        <form method="POST" action="/audit-scrapes">
-                            <button type="submit" class="menu-item">⚡ Audit Bad Scrapes</button>
-                        </form>
-                        
-                        <div class="menu-divider"></div>
-                        
-                        <a href="{{ url_for('auth.logout') }}" class="menu-item" style="text-decoration:none;">🚪 Logout</a>
-                    </div>
-                </div>
+                <a href="{{ url_for('admin.tools_page') }}" class="theme-toggle" style="text-decoration: none;">🛠 Admin Tools</a>
             </div>
         </div>
 
@@ -867,23 +814,23 @@
                             </div>
                         {% endif %}
                     </div>
-                    
+
                     <div class="story-content">
                         <div class="story-header">
-                            <h2><a href="{{ url_for('public.view_story', story_id=story.id) }}" style="color: inherit; text-decoration: none;">{{ story.headline if story.headline else story.title }}</a></h2>
+                            <h2><a href="{{ url_for('public.view_story', story_id=story.id) }}" style="color: inherit; text-decoration: none;">{{ story.display_headline }}</a></h2>
                         </div>
-                        
+
                         <div style="font-size: 11px; font-weight: 600; color: var(--text-faint); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                             {% if story.last_updated %}
                                 <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--accent-light);"></span>
                                 Last updated: <span class="local-date" data-utc="{{ story.last_updated.isoformat() }}Z">{{ story.last_updated.strftime('%Y-%m-%d %H:%M') }}</span>
                             {% endif %}
-                            
+
                             {% if story.deep_report %}
                                 <span style="background: var(--accent); color: white; padding: 2px 8px; border-radius: 4px; font-size: 9px; text-transform: uppercase; font-weight: 800; letter-spacing: 0.5px;">ANALYSIS AVAILABLE</span>
                             {% endif %}
 
-                            {% if story.headline %}
+                            {% if story.has_ai_headline %}
                                 <span style="margin-left:auto; background:rgba(0,0,0,0.05); padding:2px 8px; border-radius:4px; font-style:normal;">AI HEADLINE</span>
                             {% endif %}
                         </div>
@@ -923,6 +870,22 @@
                                         <div style="font-size: 24px; font-weight: 900; color: var(--text);">{{ counts.b4 + counts.b5 }}</div>
                                     </div>
                                 </div>
+
+                                {% if story.enrichment_direction and story.bias_gap >= 2 %}
+                                <div class="action-row" style="margin-bottom: 12px;">
+                                    <form method="POST" action="{{ url_for('admin.enrich_story_balance', story_id=story.id) }}" style="width: 100%;">
+                                        <input type="hidden" name="label" value="{{ active_label or '' }}">
+                                        <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
+                                        <button type="submit" class="btn btn-muted" style="width: 100%; padding: 10px 12px; font-weight: 700;">
+                                            {% if story.enrichment_direction == 'right' %}
+                                                Fetch More Right-Leaning Coverage
+                                            {% else %}
+                                                Fetch More Left-Leaning Coverage
+                                            {% endif %}
+                                        </button>
+                                    </form>
+                                </div>
+                                {% endif %}
 
                                 <div class="action-row" style="margin-bottom: 0;">
                                     <a href="{{ url_for('public.view_story', story_id=story.id) }}" class="btn btn-dark" style="text-decoration: none; width: 100%; text-align: center; padding: 12px; font-weight: 800; letter-spacing: 1px;">
@@ -980,14 +943,11 @@
                                         {% endif %}
 
                                         <span class="article-actions">
-                                            <form method="POST" action="{{ url_for('admin.summarize_article_route', article_id=article.id) }}">
-                                                <input type="hidden" name="label" value="{{ active_label or '' }}">
-                                                <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
-                                                <button type="submit" class="btn btn-muted"
-                                                    title="AI Summary">
-                                                    {{ '↻' if article.summary else '✦' }} Summary
-                                                </button>
-                                            </form>
+                                            <button type="button" class="btn btn-muted"
+                                                title="AI Summary"
+                                                onclick="startAiTask('article_summary', {{ article.id }}, this)">
+                                                {{ '↻' if article.summary else '✦' }} Summary
+                                            </button>
                                             <form method="POST" action="{{ url_for('admin.rate_article', article_id=article.id) }}">
                                                 <input type="hidden" name="label" value="{{ active_label or '' }}">
                                                 <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
@@ -1057,6 +1017,8 @@
     </div>
 </div>
 
+<div id="ai-task-status" style="display:none; position:fixed; right:20px; bottom:20px; max-width:320px; padding:12px 14px; border-radius:12px; border:1px solid var(--border); background:var(--surface); color:var(--text-muted); font-size:13px; box-shadow:0 10px 30px rgba(0,0,0,0.08); z-index:1200;"></div>
+
 <script>
     // ── Theme ──
     function applyTheme(theme) {
@@ -1075,40 +1037,102 @@
     // Apply saved theme on load
     const savedTheme = localStorage.getItem('muckscraper-theme') || 'light';
     applyTheme(savedTheme);
-    
+
     // ── Sidebar ──
     function toggleSidebar() {
         const sidebar = document.getElementById('sidebar');
         const btn = document.getElementById('sidebar-toggle');
         sidebar.classList.toggle('collapsed');
-        
+
         const isCollapsed = sidebar.classList.contains('collapsed');
         localStorage.setItem('muckscraper-sidebar', isCollapsed ? 'collapsed' : 'expanded');
         btn.textContent = isCollapsed ? '»' : '«';
     }
-    
+
     const savedSidebar = localStorage.getItem('muckscraper-sidebar');
     if (savedSidebar === 'collapsed') {
         document.getElementById('sidebar').classList.add('collapsed');
         document.getElementById('sidebar-toggle').textContent = '»';
     }
-    
-    // ── Action Menu ──
-    function toggleActionMenu() {
-        document.getElementById('action-dropdown').classList.toggle('show');
+
+    const aiTaskStartUrl = "{{ url_for('admin.start_ai_task') }}";
+    const aiTaskStatusTemplate = "{{ url_for('admin.ai_task_status', task_type='TASK_TYPE', resource_id=999999) }}";
+    let activeAiTaskPoll = null;
+
+    function aiTaskStatusUrl(taskType, resourceId) {
+        return aiTaskStatusTemplate
+            .replace('TASK_TYPE', taskType)
+            .replace('999999', String(resourceId));
     }
-    
-    // Close menu when clicking outside
-    window.onclick = function(event) {
-        if (!event.target.matches('.icon-btn') && !event.target.matches('.menu-item')) {
-            var dropdowns = document.getElementsByClassName("action-dropdown");
-            for (var i = 0; i < dropdowns.length; i++) {
-                var openDropdown = dropdowns[i];
-                if (openDropdown.classList.contains('show')) {
-                    openDropdown.classList.remove('show');
+
+    function renderAiTaskStatus(status, isError = false) {
+        const box = document.getElementById('ai-task-status');
+        if (!box) return;
+        box.style.display = 'block';
+        box.style.borderColor = isError ? 'rgba(154, 114, 91, 0.22)' : 'var(--border)';
+        box.style.background = isError ? 'rgba(154, 114, 91, 0.08)' : 'var(--surface)';
+        box.style.color = isError ? '#9a725b' : 'var(--text-muted)';
+        box.textContent = status.message || 'AI task update received.';
+    }
+
+    async function pollAiTask(taskType, resourceId, button) {
+        if (activeAiTaskPoll) {
+            clearInterval(activeAiTaskPoll);
+            activeAiTaskPoll = null;
+        }
+
+        const statusUrl = aiTaskStatusUrl(taskType, resourceId);
+        activeAiTaskPoll = setInterval(async () => {
+            const response = await fetch(statusUrl);
+            const status = await response.json();
+            renderAiTaskStatus(status, status.status === 'error');
+
+            if (status.status === 'success') {
+                clearInterval(activeAiTaskPoll);
+                activeAiTaskPoll = null;
+                window.location.reload();
+                return;
+            }
+
+            if (status.status === 'error') {
+                clearInterval(activeAiTaskPoll);
+                activeAiTaskPoll = null;
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = button.dataset.originalText;
                 }
             }
+        }, 2000);
+    }
+
+    async function startAiTask(taskType, resourceId, button) {
+        if (button) {
+            button.dataset.originalText = button.textContent;
+            button.disabled = true;
+            button.textContent = 'Working...';
         }
+
+        const response = await fetch(aiTaskStartUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                task_type: taskType,
+                resource_id: resourceId,
+            }),
+        });
+
+        const payload = await response.json();
+        renderAiTaskStatus(payload.status || payload, response.status >= 400);
+
+        if (!response.ok && response.status !== 409) {
+            if (button) {
+                button.disabled = false;
+                button.textContent = button.dataset.originalText;
+            }
+            return;
+        }
+
+        await pollAiTask(taskType, resourceId, button);
     }
 
     // ── Ollama status ──
@@ -1132,6 +1156,26 @@
             });
     }
 
+    function checkMeiliStatus() {
+        fetch('/meili-status')
+            .then(r => r.json())
+            .then(data => {
+                const dot = document.getElementById('meili-dot');
+                const label = document.getElementById('meili-label');
+                if (data.online) {
+                    dot.className = 'status-dot online';
+                    label.textContent = 'Meili Search Online';
+                } else {
+                    dot.className = 'status-dot offline';
+                    label.textContent = 'Meili Search Offline';
+                }
+            })
+            .catch(() => {
+                document.getElementById('meili-dot').className = 'status-dot offline';
+                document.getElementById('meili-label').textContent = 'Meili Search Offline';
+            });
+    }
+
     // ── Local Timezone Conversion ──
     function convertToLocalTime() {
         const dateElements = document.querySelectorAll('.local-date');
@@ -1140,37 +1184,18 @@
             if (utcDate) {
                 const date = new Date(utcDate);
                 // Options to format like YYYY-MM-DD HH:MM
-                const options = { 
-                    year: 'numeric', 
-                    month: '2-digit', 
+                const options = {
+                    year: 'numeric',
+                    month: '2-digit',
                     day: '2-digit',
-                    hour: '2-digit', 
+                    hour: '2-digit',
                     minute: '2-digit',
-                    hour12: false 
+                    hour12: false
                 };
                 // Use 'en-CA' for YYYY-MM-DD format or undefined for system locale
                 el.textContent = date.toLocaleString(undefined, options).replace(',', '');
             }
         });
-    }
-
-    function runMergeOutlets() {
-        if (!confirm('Merge and rename duplicate outlets? This cannot be undone.')) return;
-        fetch('/merge-outlets', { method: 'POST' })
-            .then(r => r.json())
-            .then(data => {
-            if (data.status === 'ok') {
-                alert(
-                'Done!\n' +
-                'Outlets renamed: ' + data.renamed + '\n' +
-                'Duplicate outlets removed: ' + data.outlets_deleted + '\n' +
-                'Articles reassigned: ' + data.articles_reassigned
-                );
-            } else {
-                alert('Error: ' + data.message);
-            }
-            })
-            .catch(e => alert('Request failed: ' + e));
     }
 
     // ── Scroll Position ──
@@ -1205,8 +1230,10 @@
     });
 
     checkOllamaStatus();
+    checkMeiliStatus();
     convertToLocalTime();
     setInterval(checkOllamaStatus, 30000);
+    setInterval(checkMeiliStatus, 30000);
 </script>
 
 </body>

@@ -1,17 +1,22 @@
 import logging
 import json
+import threading
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
-from flask import Blueprint, render_template, request, redirect, url_for, jsonify
+from flask import Blueprint, current_app, render_template, request, redirect, url_for, jsonify
 from flask_login import login_required
-from sqlalchemy import func, or_
+from sqlalchemy import case, func, or_
 from aggregator import db
-from aggregator.models import AppSetting, Article, Story, Topic, RawArticlePayload
+from aggregator.models import AppSetting, Article, Outlet, Story, Topic, RawArticlePayload
 from aggregator.constants import TOPICS, AGGREGATORS
+from aggregator.search import SearchUnavailableError, reindex_all, search_story_ids
 
 logger = logging.getLogger(__name__)
 
 admin = Blueprint("admin", __name__)
+SEARCH_REINDEX_STATUS_KEY = "search_reindex_status_v1"
+search_reindex_lock = threading.Lock()
+ai_task_lock = threading.Lock()
 SCRAPE_STATUS_FILTERS = ("success", "fallback", "blocked", "failed", "skipped", "pending")
 FETCH_PRESETS = [
     {
@@ -81,6 +86,171 @@ def _load_json_setting(key):
         }
 
 
+def _save_json_setting(key, payload):
+    setting = AppSetting.query.filter_by(key=key).first()
+    if setting:
+        setting.value = json.dumps(payload)
+    else:
+        db.session.add(AppSetting(key=key, value=json.dumps(payload)))
+    db.session.commit()
+
+
+def _search_reindex_status_payload():
+    payload = _load_json_setting(SEARCH_REINDEX_STATUS_KEY)
+    if payload:
+        return payload
+    return {
+        "status": "idle",
+        "started_at": None,
+        "finished_at": None,
+        "message": "Search index has not been rebuilt in this app session yet.",
+        "story_documents": None,
+        "article_documents": None,
+    }
+
+
+def _ai_task_status_key(task_type, resource_id):
+    return f"ai_task_status_v1:{task_type}:{resource_id}"
+
+
+def _ai_task_default_message(task_type):
+    messages = {
+        "story_summary": "Story summary has not been started in this app session yet.",
+        "story_deep_report": "Story analysis has not been started in this app session yet.",
+        "article_summary": "Article summary has not been started in this app session yet.",
+    }
+    return messages.get(task_type, "AI task has not been started in this app session yet.")
+
+
+def _ai_task_status_payload(task_type, resource_id):
+    payload = _load_json_setting(_ai_task_status_key(task_type, resource_id))
+    if payload:
+        return payload
+    return {
+        "status": "idle",
+        "task_type": task_type,
+        "resource_id": resource_id,
+        "started_at": None,
+        "finished_at": None,
+        "message": _ai_task_default_message(task_type),
+    }
+
+
+def _save_ai_task_status(task_type, resource_id, payload):
+    base_payload = {
+        "task_type": task_type,
+        "resource_id": resource_id,
+    }
+    base_payload.update(payload)
+    _save_json_setting(_ai_task_status_key(task_type, resource_id), base_payload)
+
+
+def _run_ai_task(app, task_type, resource_id):
+    with app.app_context():
+        started_at = _ai_task_status_payload(task_type, resource_id).get("started_at")
+
+        try:
+            from news_fetcher.summarizer import (
+                summarize_story,
+                summarize_article,
+                generate_deep_report,
+                check_ollama_status,
+            )
+
+            if not check_ollama_status():
+                raise RuntimeError("Ollama is offline.")
+
+            if task_type == "story_summary":
+                story = Story.query.get_or_404(resource_id)
+                summary = summarize_story(story)
+                if not summary:
+                    raise RuntimeError("No story summary was generated.")
+                story.summary = summary
+                db.session.commit()
+                message = "Story summary completed successfully."
+            elif task_type == "story_deep_report":
+                story = Story.query.get_or_404(resource_id)
+                if len(story.articles) < 2:
+                    raise RuntimeError("Story analysis requires at least two articles.")
+                report = generate_deep_report(story)
+                if not report:
+                    raise RuntimeError("No story analysis was generated.")
+                story.deep_report = report
+                db.session.commit()
+                message = "Story analysis completed successfully."
+            elif task_type == "article_summary":
+                article = Article.query.get_or_404(resource_id)
+                summary = summarize_article(article)
+                if not summary:
+                    raise RuntimeError("No article summary was generated.")
+                article.summary = summary
+                db.session.commit()
+                message = "Article summary completed successfully."
+            else:
+                raise RuntimeError(f"Unknown AI task type: {task_type}")
+
+            _save_ai_task_status(
+                task_type,
+                resource_id,
+                {
+                    "status": "success",
+                    "started_at": started_at,
+                    "finished_at": datetime.utcnow().isoformat(),
+                    "message": message,
+                },
+            )
+        except Exception as e:
+            db.session.rollback()
+            logger.exception("Async AI task error type=%s resource_id=%s: %s", task_type, resource_id, e)
+            _save_ai_task_status(
+                task_type,
+                resource_id,
+                {
+                    "status": "error",
+                    "started_at": started_at,
+                    "finished_at": datetime.utcnow().isoformat(),
+                    "message": str(e),
+                },
+            )
+
+
+def _run_search_reindex(app):
+    with app.app_context():
+        try:
+            started_at = _search_reindex_status_payload().get("started_at")
+            counts = reindex_all()
+            _save_json_setting(
+                SEARCH_REINDEX_STATUS_KEY,
+                {
+                    "status": "success",
+                    "started_at": started_at,
+                    "finished_at": datetime.utcnow().isoformat(),
+                    "message": "Meilisearch reindex completed successfully.",
+                    "story_documents": counts["story_documents"],
+                    "article_documents": counts["article_documents"],
+                },
+            )
+            logger.info(
+                "[Search] Async reindex complete stories=%s articles=%s",
+                counts["story_documents"],
+                counts["article_documents"],
+            )
+        except Exception as e:
+            logger.exception(f"Async search reindex error: {e}")
+            started_at = _search_reindex_status_payload().get("started_at")
+            _save_json_setting(
+                SEARCH_REINDEX_STATUS_KEY,
+                {
+                    "status": "error",
+                    "started_at": started_at,
+                    "finished_at": datetime.utcnow().isoformat(),
+                    "message": str(e),
+                    "story_documents": None,
+                    "article_documents": None,
+                },
+            )
+
+
 def article_domain(url):
     if not url:
         return None
@@ -114,7 +284,41 @@ def apply_aggregator_filter(story):
         story.display_articles.sort(key=lambda x: x.date or dt.min, reverse=True)
 
 
+def story_bias_totals(story):
+    counts = {
+        "left": 0,
+        "center": 0,
+        "right": 0,
+    }
+    for article in story.articles:
+        score = article.bias_score
+        if score is None and article.outlet:
+            score = article.outlet.bias_score
+        if score is None:
+            continue
+        if score <= 2.5:
+            counts["left"] += 1
+        elif score <= 3.5:
+            counts["center"] += 1
+        else:
+            counts["right"] += 1
+
+    story.left_bias_count = counts["left"]
+    story.center_bias_count = counts["center"]
+    story.right_bias_count = counts["right"]
+    story.bias_gap = abs(counts["left"] - counts["right"])
+    if counts["left"] > counts["right"]:
+        story.enrichment_direction = "right"
+    elif counts["right"] > counts["left"]:
+        story.enrichment_direction = "left"
+    else:
+        story.enrichment_direction = None
+
+
 def redirect_to_articles(label=None, scrape_status=None):
+    next_url = request.form.get("next", "").strip()
+    if next_url.startswith("/"):
+        return redirect(next_url)
     params = {}
     if label:
         params["topic"] = label
@@ -139,6 +343,12 @@ def fetch_page():
     return render_template("fetch.html", fetch_presets=FETCH_PRESETS)
 
 
+@admin.route("/tools")
+@login_required
+def tools_page():
+    return render_template("admin_tools.html")
+
+
 @admin.route("/articles")
 @login_required
 def list_articles(per_page=25, force_multi=False):
@@ -159,6 +369,7 @@ def list_articles(per_page=25, force_multi=False):
         show_single = False
 
     query = Story.query.join(Article).group_by(Story.id)
+    meili_story_ids = None
 
     if not show_single:
         query = query.having(func.count(Article.id) > 1)
@@ -173,43 +384,44 @@ def list_articles(per_page=25, force_multi=False):
     if active_scrape_status:
         query = query.filter(Story.articles.any(Article.scrape_status == active_scrape_status))
 
-    search_rank = None
     if active_search_query:
-        tsquery = func.websearch_to_tsquery("english", active_search_query)
-        story_document = func.to_tsvector(
-            "english",
-            func.concat_ws(
-                " ",
-                func.coalesce(Story.title, ""),
-                func.coalesce(Story.headline, ""),
-                func.coalesce(Story.summary, ""),
-                func.coalesce(Story.deep_report, ""),
-            ),
-        )
-        article_document = func.to_tsvector(
-            "english",
-            func.concat_ws(
-                " ",
-                func.coalesce(Article.title, ""),
-                func.coalesce(Article.content, ""),
-                func.coalesce(Article.source, ""),
-            ),
-        )
-        query = query.filter(
-            or_(
-                story_document.op("@@")(tsquery),
-                article_document.op("@@")(tsquery),
-                Story.topics.any(Topic.name.ilike(f"%{active_search_query}%")),
-            )
-        )
-        search_rank = func.greatest(
-            func.coalesce(func.max(func.ts_rank(story_document, tsquery)), 0.0),
-            func.coalesce(func.max(func.ts_rank(article_document, tsquery)), 0.0),
-        )
+        try:
+            meili_story_ids = search_story_ids(active_search_query)
+        except SearchUnavailableError as exc:
+            logger.warning("Meilisearch unavailable, falling back to SQL search: %s", exc)
 
-    order_by = [func.max(Article.date).desc()]
-    if search_rank is not None:
-        order_by.insert(0, search_rank.desc())
+        if meili_story_ids is not None:
+            if meili_story_ids:
+                query = query.filter(Story.id.in_(meili_story_ids))
+            else:
+                query = query.filter(False)
+        else:
+            # Keep admin search fast by limiting it to shorter text fields.
+            # The previous full-text search scanned large summary/content columns
+            # and could time out on short terms like "ICE".
+            search_terms = [term for term in active_search_query.split() if term]
+            if not search_terms:
+                search_terms = [active_search_query]
+            for term in search_terms:
+                like_term = f"%{term}%"
+                query = query.filter(
+                    or_(
+                        Story.title.ilike(like_term),
+                        Story.headline.ilike(like_term),
+                        Story.topics.any(Topic.name.ilike(like_term)),
+                        Story.articles.any(Article.title.ilike(like_term)),
+                        Story.articles.any(Article.source.ilike(like_term)),
+                        Story.articles.any(Article.outlet.has(Outlet.name.ilike(like_term))),
+                    )
+                )
+
+    if meili_story_ids:
+        order_by = [
+            case({story_id: index for index, story_id in enumerate(meili_story_ids)}, value=Story.id),
+            func.max(Article.date).desc(),
+        ]
+    else:
+        order_by = [func.max(Article.date).desc()]
 
     pagination = query.order_by(*order_by).paginate(
         page=page, per_page=per_page, error_out=False
@@ -220,6 +432,7 @@ def list_articles(per_page=25, force_multi=False):
 
     for story in stories:
         apply_aggregator_filter(story)
+        story_bias_totals(story)
 
     return render_template(
         "articles.html",
@@ -268,6 +481,32 @@ def fetch_articles():
     except Exception as e:
         logger.error(f"Fetch error: {e}")
 
+    return redirect_to_articles(label, scrape_status)
+
+
+@admin.route("/enrich-story-balance/<int:story_id>", methods=["POST"])
+@login_required
+def enrich_story_balance(story_id):
+    story = Story.query.get_or_404(story_id)
+    label = request.form.get("label", "")
+    scrape_status = request.form.get("scrape_status", "").strip() or None
+    try:
+        from news_fetcher.rss_fetcher import enrich_story_with_opposite_feeds
+        from news_fetcher.fetch_and_store_articles import retry_unrated_outlets
+
+        metrics = enrich_story_with_opposite_feeds(story, max_articles_per_story=3)
+        if metrics.get("stored", 0) > 0:
+            retry_unrated_outlets()
+        logger.info(
+            "[Admin] Story balance enrichment story_id=%s direction=%s stored=%s matched=%s status=%s",
+            story_id,
+            metrics.get("direction"),
+            metrics.get("stored", 0),
+            metrics.get("matched_articles", 0),
+            metrics.get("status"),
+        )
+    except Exception as e:
+        logger.exception(f"Story balance enrichment error for story {story_id}: {e}")
     return redirect_to_articles(label, scrape_status)
 
 
@@ -449,6 +688,110 @@ def wake_ollama():
     except Exception as e:
         logger.error(f"WoL error: {e}")
     return redirect_to_articles(label, scrape_status)
+
+
+@admin.route("/reindex-search", methods=["POST"])
+@login_required
+def reindex_search():
+    with search_reindex_lock:
+        current_status = _search_reindex_status_payload()
+        if current_status.get("status") == "running":
+            return jsonify({
+                "started": False,
+                "status": current_status,
+            }), 409
+
+        started_at = datetime.utcnow().isoformat()
+        _save_json_setting(
+            SEARCH_REINDEX_STATUS_KEY,
+            {
+                "status": "running",
+                "started_at": started_at,
+                "finished_at": None,
+                "message": "Reindexing stories and articles into Meilisearch.",
+                "story_documents": None,
+                "article_documents": None,
+            },
+        )
+        app = current_app._get_current_object()
+        thread = threading.Thread(target=_run_search_reindex, args=(app,), daemon=True)
+        thread.start()
+
+    return jsonify({
+        "started": True,
+        "status": _search_reindex_status_payload(),
+    }), 202
+
+
+@admin.route("/reindex-search-status")
+@login_required
+def reindex_search_status():
+    return jsonify(_search_reindex_status_payload())
+
+
+@admin.route("/ai-task/start", methods=["POST"])
+@login_required
+def start_ai_task():
+    payload = request.get_json(silent=True) or request.form
+    task_type = (payload.get("task_type") or "").strip()
+    resource_id = payload.get("resource_id")
+
+    try:
+        resource_id = int(resource_id)
+    except (TypeError, ValueError):
+        return jsonify({
+            "started": False,
+            "message": "Invalid resource id.",
+        }), 400
+
+    if task_type not in {"story_summary", "story_deep_report", "article_summary"}:
+        return jsonify({
+            "started": False,
+            "message": "Invalid AI task type.",
+        }), 400
+
+    with ai_task_lock:
+        current_status = _ai_task_status_payload(task_type, resource_id)
+        if current_status.get("status") == "running":
+            return jsonify({
+                "started": False,
+                "status": current_status,
+            }), 409
+
+        started_at = datetime.utcnow().isoformat()
+        _save_ai_task_status(
+            task_type,
+            resource_id,
+            {
+                "status": "running",
+                "started_at": started_at,
+                "finished_at": None,
+                "message": "AI task is running.",
+            },
+        )
+        app = current_app._get_current_object()
+        thread = threading.Thread(
+            target=_run_ai_task,
+            args=(app, task_type, resource_id),
+            daemon=True,
+        )
+        thread.start()
+
+    return jsonify({
+        "started": True,
+        "status": _ai_task_status_payload(task_type, resource_id),
+    }), 202
+
+
+@admin.route("/ai-task-status/<task_type>/<int:resource_id>")
+@login_required
+def ai_task_status(task_type, resource_id):
+    if task_type not in {"story_summary", "story_deep_report", "article_summary"}:
+        return jsonify({
+            "status": "error",
+            "message": "Invalid AI task type.",
+        }), 400
+    return jsonify(_ai_task_status_payload(task_type, resource_id))
 
 
 @admin.route("/reclassify-articles", methods=["POST"])

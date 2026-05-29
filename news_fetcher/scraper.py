@@ -61,6 +61,10 @@ GOOGLEBOT_DOMAINS = [
     "sfgate.com",
 ]
 
+VARIANT_RETRY_403_DOMAINS = [
+    "thehill.com",
+]
+
 # Sites to skip entirely
 SKIP_DOMAINS = [
     "youtube.com",
@@ -338,8 +342,12 @@ def get_retry_deferral(url, now=None):
     return None, None
 
 
-def should_try_variant_urls(http_status=None, failure_reason=None):
+def should_try_variant_urls(url=None, http_status=None, failure_reason=None):
     """Return False when the base failure is stable enough that variants are low-value."""
+    domain = get_domain(url) if url else None
+    if domain in VARIANT_RETRY_403_DOMAINS and http_status in (403,):
+        return True
+
     if http_status in (401, 403, 404, 410):
         return False
 
@@ -571,6 +579,10 @@ def build_variant_urls(url, html=None):
 
     parsed = urlparse(url)
     query_pairs = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    domain = get_domain(url)
+
+    if domain == "thehill.com" and not parsed.path.rstrip("/").endswith("/amp"):
+        add(urlunparse(parsed._replace(path=parsed.path.rstrip("/") + "/amp/")))
 
     if "output" not in query_pairs:
         q = dict(query_pairs)
@@ -850,7 +862,7 @@ def scrape_article(url, fallback_content=None, force=False):
         if content:
             return finalize_content(content, "playwright")
 
-    if should_try_variant_urls(http_status=http_status, failure_reason=last_failure):
+    if should_try_variant_urls(url=url, http_status=http_status, failure_reason=last_failure):
         for variant_url in build_variant_urls(url, html=initial_html):
             logger.info(f"  [Scraper] Trying variant {variant_url[:80]}")
             variant_result = try_bs4(variant_url, method="variant_bs4")

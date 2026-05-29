@@ -100,6 +100,41 @@ group by scrape_status
 order by articles desc;
 ```
 
+### Compare low-value skip reasons before and after a change date
+What it does: summarizes run-level `roundup` and `low_value_url` skips from `scrape_outcome_history_v1`.
+Use this after deploying filtering changes to confirm those skip reasons rise without reducing stored coverage.
+
+```sql
+with h as (
+  select jsonb_array_elements(value::jsonb) elem
+  from app_settings
+  where key = 'scrape_outcome_history_v1'
+),
+hist as (
+  select (elem->>'recorded_at')::timestamp as recorded_at,
+         (elem->>'input_articles')::int as input_articles,
+         (elem->>'stored_articles')::int as stored_articles,
+         coalesce((elem->'run_skipped'->>'roundup')::int, 0) as roundup,
+         coalesce((elem->'run_skipped'->>'low_value_url')::int, 0) as low_value_url
+  from h
+)
+select case
+         when recorded_at < timestamp '2026-05-16 00:00:00' then 'before'
+         else 'after'
+       end as period,
+       count(*) as runs,
+       sum(input_articles) as total_input,
+       sum(stored_articles) as total_stored,
+       round((sum(stored_articles)::numeric / nullif(sum(input_articles), 0)) * 100, 2) as stored_pct_input,
+       sum(roundup) as total_roundup,
+       sum(low_value_url) as total_low_value_url
+from hist
+where recorded_at >= timestamp '2026-05-13 00:00:00'
+  and recorded_at < timestamp '2026-05-21 00:00:00'
+group by 1
+order by 1;
+```
+
 ### Show recent scrape failures by outlet
 What it does: identifies publishers that are currently breaking scraping.
 
