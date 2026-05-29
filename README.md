@@ -15,13 +15,16 @@
 ![MuckScraper Dark Mode](screenshots/dark_mode.png)
 
 ### Multi-Source Story View
-![Story Reader](screenshots/story_reader.png)
+![Story Reader](screenshots/story_reader1.png)
+![Story Reader](screenshots/story_reader2.png)
 
 ### Bias Tags
-![Bias Tags](screenshots/bias_tags.png)
+![Bias Tags](screenshots/bias_tags1.png)
+![Bias Tags](screenshots/bias_tags2.png)
 
 ### Article Reader
-![Article Reader](screenshots/article_reader.png)
+![Article Reader](screenshots/article_reader1.png)
+![Article Reader](screenshots/article_reader2.png)
 
 ---
 
