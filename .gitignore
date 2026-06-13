@@ -8,6 +8,10 @@ destroy.sh
 GEMINI.md
 printouts
 .gitignore
+.claude
+.agents
+tests
+catcode.sh
 
 # Personal Headline feature files
 aggregator/public_app.py

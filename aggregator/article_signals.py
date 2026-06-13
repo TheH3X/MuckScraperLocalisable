@@ -39,10 +39,12 @@ LOW_VALUE_URL_HINTS = (
     "/newsletters/",
     "/newsletter/",
     "/briefings/",
+    "/opinion/letters/",
 )
 
 LOW_VALUE_TITLE_PATTERNS = (
     re.compile(r"^\s*(?:watch|video|listen)\s*:", re.IGNORECASE),
+    re.compile(r"\bletters?\s+to\s+the\s+editor\b", re.IGNORECASE),
     re.compile(r"\blive updates?\b", re.IGNORECASE),
     re.compile(r"\bphoto(?:s| gallery)?\b", re.IGNORECASE),
     re.compile(r"\bgallery\b", re.IGNORECASE),

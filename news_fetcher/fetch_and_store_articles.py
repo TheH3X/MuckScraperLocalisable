@@ -598,6 +598,10 @@ def normalize_source_name(name):
     if "washington post" in name_lower:
         return "Washington Post"
 
+    # Washington Times RSS section titles
+    if "washington times" in name_lower:
+        return "The Washington Times"
+
     # Wall Street Journal variants  
     if "wall street journal" in name_lower or name_lower == "wsj":
         return "WSJ"
@@ -1761,19 +1765,6 @@ def process_current_edition():
     )
     from aggregator.models import Edition, EditionStory
 
-    if not check_ollama_status():
-        logger.info("[Processor] Ollama offline, skipping edition processing.")
-        return {
-            "status": "skipped_no_ollama",
-            "stories_seen": 0,
-            "story_summaries_generated": 0,
-            "deep_reports_generated": 0,
-            "child_article_summaries_generated": 0,
-            "child_article_analyses_generated": 0,
-            "stale_stories_reset": 0,
-            "stable_stories_skipped": 0,
-        }
-
     latest_edition = Edition.query.order_by(Edition.created_at.desc()).first()
     if not latest_edition:
         logger.info("[Processor] No edition found to process.")
@@ -1788,10 +1779,18 @@ def process_current_edition():
             "stable_stories_skipped": 0,
         }
 
+    ollama_available = check_ollama_status()
+    if not ollama_available:
+        logger.warning(
+            "[Processor] Ollama unreachable at start of edition processing; "
+            "will still scan stories and skip generation calls until Ollama recovers."
+        )
+
     stories = [es.story for es in latest_edition.edition_stories.order_by(EditionStory.rank).all()]
     metrics = {
         "status": "processed",
         "edition_id": latest_edition.id,
+        "ollama_available_at_start": ollama_available,
         "stories_seen": len(stories),
         "story_summaries_generated": 0,
         "deep_reports_generated": 0,
@@ -1800,7 +1799,7 @@ def process_current_edition():
         "stale_stories_reset": 0,
         "stable_stories_skipped": 0,
     }
-    
+
     logger.info(f"[Processor] Processing {len(stories)} stories from {latest_edition.edition_type} edition...")
 
     STALE_ARTICLE_THRESHOLD = 3  # new articles needed to trigger reanalysis
