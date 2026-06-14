@@ -203,14 +203,14 @@ def detect_analysis_type(obj):
 
     if _contains_any(text, PUBLIC_SAFETY_ANALYSIS_KEYWORDS):
         return 'default'
-    if any('us politics' in t for t in topics_lower) and _contains_any(text, POLITICAL_ANALYSIS_KEYWORDS):
+    if any(t == 'us politics' for t in topics_lower) and _contains_any(text, POLITICAL_ANALYSIS_KEYWORDS):
         return 'politics'
-    if any('science' in t or 'technology' in t for t in topics_lower):
+    if any(t == 'sci/tech' for t in topics_lower):
         return 'science'
-    if any('sports' in t for t in topics_lower):
+    if any(t == 'sports' for t in topics_lower):
         return 'sports'
     if (
-        any('business' in t or 'finance' in t for t in topics_lower)
+        any(t == 'buss/fin' for t in topics_lower)
         and _contains_any(text, BUSINESS_ANALYSIS_KEYWORDS)
     ):
         return 'business'

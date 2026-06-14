@@ -20,9 +20,11 @@ MODEL       = os.environ.get("OLLAMA_MODEL", "")
 
 VALID_TOPICS = [
     "US Politics",
-    "Science/Technology",
+    "US News",
+    "International News",
+    "Sci/Tech",
     "Sports",
-    "Business/Finance",
+    "Buss/Fin",
     "Other",
 ]
 
@@ -52,15 +54,22 @@ Article: "{text}"
 
 Categories (choose only from these exact names):
 - US Politics
-- Science/Technology
+- US News
+- International News
+- Sci/Tech
 - Sports
-- Business/Finance
+- Buss/Fin
 - Other
 
 Rules:
 - Use EXACT category names only — do not create new categories
-- Business/Finance means financial markets, economics, corporate earnings, mergers — NOT general commerce
-- Sports contracts and player signings belong to Sports only, not Business/Finance
+- US Politics means US federal government, Congress, White House, elections, federal courts/policy, or any US government action or statement toward another country (diplomacy, sanctions, tariffs, military orders)
+- International News means events, governments, conflicts, or disasters in other countries. If a story is about a US government action toward another country, use BOTH US Politics and International News
+- US News means domestic US news that is NOT about government or politics — crime, accidents, disasters, lawsuits, local/state news, transportation, weather
+- Entertainment, celebrity, lifestyle, and human-interest stories belong to Other, not US News
+- Sci/Tech means technology, science, research, AI, space — NOT general business news about tech companies (use Buss/Fin for stock/earnings stories)
+- Buss/Fin means financial markets, economics, corporate earnings, mergers — NOT general commerce
+- Sports contracts and player signings belong to Sports only, not Buss/Fin
 - Pick the most specific category — if it's clearly Sports, do not also add other categories
 - Maximum 2 categories per article unless truly necessary
 - If none apply, respond with only: Other

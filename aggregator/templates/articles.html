@@ -734,7 +734,7 @@
                 <div class="topic-block {% if active_label == topic.label %}active{% endif %}">
                     <a href="{{ url_for('admin.list_articles', topic=topic.label, scrape_status=active_scrape_status, show_single=show_single|string|lower, q=active_search_query or '') }}">
                         <span class="full-text">{{ topic.label }}</span>
-                        <span class="icon-text">{{ topic.label[0] }}</span>
+                        <span class="icon-text">{{ topic.icon }}</span>
                     </a>
                 </div>
                 {% endfor %}
