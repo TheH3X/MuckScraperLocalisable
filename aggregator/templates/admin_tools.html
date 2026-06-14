@@ -3,6 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
     <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon_32.png') }}">
     <link rel="icon" type="image/png" sizes="128x128" href="{{ url_for('static', filename='favicon_128.png') }}">
@@ -315,6 +316,7 @@
                     <span class="badge">Safe</span>
                 </div>
                 <form method="POST" action="{{ url_for('admin.wake_ollama') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="next" value="{{ url_for('admin.tools_page') }}">
                     <button type="submit" class="btn">Wake Ollama</button>
                 </form>
@@ -326,6 +328,7 @@
                     <span class="badge">Safe</span>
                 </div>
                 <form method="POST" action="{{ url_for('admin.ollama_catchup_route') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="next" value="{{ url_for('admin.tools_page') }}">
                     <button type="submit" class="btn">Run AI Catch-up</button>
                 </form>
@@ -337,6 +340,7 @@
                     <span class="badge">Safe</span>
                 </div>
                 <form method="POST" action="{{ url_for('admin.scrape_all_missing') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="next" value="{{ url_for('admin.tools_page') }}">
                     <button type="submit" class="btn">Scrape Missing</button>
                 </form>
@@ -372,6 +376,7 @@
                     <span class="badge badge-broad">⚠ Broad change</span>
                 </div>
                 <form method="POST" action="{{ url_for('admin.reclassify_articles') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="next" value="{{ url_for('admin.tools_page') }}">
                     <button type="submit" class="btn btn-broad">Reclassify Topics</button>
                 </form>
@@ -383,6 +388,7 @@
                     <span class="badge badge-danger">⚠ Danger</span>
                 </div>
                 <form method="POST" action="{{ url_for('admin.force_regroup') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="next" value="{{ url_for('admin.tools_page') }}">
                     <button type="submit" class="btn btn-danger">Rebuild Story Grouping</button>
                 </form>
@@ -394,6 +400,7 @@
                     <span class="badge badge-danger">⚠ Danger</span>
                 </div>
                 <form method="POST" action="{{ url_for('admin.force_resummarize') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="next" value="{{ url_for('admin.tools_page') }}">
                     <button type="submit" class="btn btn-danger">Rebuild Story Summaries</button>
                 </form>
@@ -405,6 +412,7 @@
                     <span class="badge">Maintenance</span>
                 </div>
                 <form method="POST" action="{{ url_for('admin.sync_allsides') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="next" value="{{ url_for('admin.tools_page') }}">
                     <button type="submit" class="btn">Sync AllSides Ratings</button>
                 </form>
@@ -433,6 +441,7 @@
                     <span class="badge badge-broad">⚠ Broad change</span>
                 </div>
                 <form method="POST" action="{{ url_for('admin.audit_scrapes') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="next" value="{{ url_for('admin.tools_page') }}">
                     <button type="submit" class="btn btn-broad">Audit Stored Scrapes</button>
                 </form>
@@ -476,7 +485,10 @@
 
     function runMergeOutlets() {
         if (!confirm('Merge and rename duplicate outlets? This changes stored outlet records and article associations.')) return;
-        fetch('{{ url_for("admin.merge_outlets") }}', { method: 'POST' })
+        fetch('{{ url_for("admin.merge_outlets") }}', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content },
+        })
             .then(r => r.json())
             .then(data => {
                 if (data.status === 'ok') {
@@ -557,7 +569,8 @@
         fetch('{{ url_for("admin.reindex_search") }}', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content,
             }
         })
             .then(async (response) => {

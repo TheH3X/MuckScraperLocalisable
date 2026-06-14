@@ -2,6 +2,7 @@
 <!DOCTYPE html>
 <html data-theme="light">
 <head>
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
     <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon_32.png') }}">
     <link rel="icon" type="image/png" sizes="128x128" href="{{ url_for('static', filename='favicon_128.png') }}">
@@ -874,6 +875,7 @@
                                 {% if story.enrichment_direction and story.bias_gap >= 2 %}
                                 <div class="action-row" style="margin-bottom: 12px;">
                                     <form method="POST" action="{{ url_for('admin.enrich_story_balance', story_id=story.id) }}" style="width: 100%;">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <input type="hidden" name="label" value="{{ active_label or '' }}">
                                         <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
                                         <button type="submit" class="btn btn-muted" style="width: 100%; padding: 10px 12px; font-weight: 700;">
@@ -949,6 +951,7 @@
                                                 {{ '↻' if article.summary else '✦' }} Summary
                                             </button>
                                             <form method="POST" action="{{ url_for('admin.rate_article', article_id=article.id) }}">
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                                 <input type="hidden" name="label" value="{{ active_label or '' }}">
                                                 <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
                                                 <button type="submit" class="btn btn-orange"
@@ -1114,7 +1117,10 @@
 
         const response = await fetch(aiTaskStartUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content,
+            },
             body: JSON.stringify({
                 task_type: taskType,
                 resource_id: resourceId,

@@ -2,6 +2,7 @@
 <!DOCTYPE html>
 <html data-theme="light">
 <head>
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
     <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon_32.png') }}">
     <link rel="icon" type="image/png" sizes="128x128" href="{{ url_for('static', filename='favicon_128.png') }}">
@@ -466,6 +467,7 @@
         <div class="article-actions" style="margin-top: 32px; display: flex; gap: 16px;">
             <button type="button" class="btn" onclick="startAiTask('article_summary', {{ article.id }}, this)">Summarize</button>
             <form method="POST" action="{{ url_for('admin.rate_article', article_id=article.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn" style="background: var(--bg); color: var(--accent); border: 1px solid var(--accent);">Rate Bias</button>
             </form>
         </div>
@@ -553,7 +555,10 @@
 
         const response = await fetch(aiTaskStartUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content,
+            },
             body: JSON.stringify({
                 task_type: taskType,
                 resource_id: resourceId,

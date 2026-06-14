@@ -156,6 +156,7 @@
     <p class="subtitle">Domains that will not be scraped. Permanent entries are pre-configured hard paywalls. Auto-blocked entries were detected at runtime.</p>
 
     <form method="POST" action="/audit-scrapes">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button type="submit" class="audit-btn">⚡ Run Scrape Audit Now</button>
     </form>
 
@@ -299,6 +300,7 @@
                     <td>
                         {% if not entry.is_permanent %}
                         <form method="POST" action="/unblock-domain" style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <input type="hidden" name="domain" value="{{ entry.domain }}">
                             <button type="submit" class="unblock-btn">Unblock</button>
                         </form>

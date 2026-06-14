@@ -2,6 +2,7 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_login import LoginManager
+from flask_wtf import CSRFProtect
 import os
 import logging
 
@@ -11,6 +12,7 @@ db = SQLAlchemy()
 migrate = Migrate()
 login = LoginManager()
 login.login_view = "auth.login"
+csrf = CSRFProtect()
 
 
 def create_app():
@@ -18,11 +20,18 @@ def create_app():
 
     app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get("DATABASE_URL", "")
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-key")
+
+    secret_key = os.environ.get("SECRET_KEY")
+    if not secret_key:
+        raise RuntimeError(
+            "SECRET_KEY environment variable must be set (see .env.sample)"
+        )
+    app.config["SECRET_KEY"] = secret_key
 
     db.init_app(app)
     migrate.init_app(app, db)
     login.init_app(app)
+    csrf.init_app(app)
 
     @login.user_loader
     def load_user(id):

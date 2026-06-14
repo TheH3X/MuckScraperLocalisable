@@ -170,6 +170,7 @@
             <h2>{{ preset.label }}</h2>
             <p>{{ preset.description }}</p>
             <form method="POST" action="{{ url_for('admin.fetch_articles') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="label" value="{{ preset.label }}">
                 <input type="hidden" name="mode" value="{{ preset.mode }}">
                 <input type="hidden" name="country" value="{{ preset.country }}">
@@ -189,6 +190,7 @@
             <h2 style="font-size: 20px; margin-bottom: 12px;">Top Headlines by Category</h2>
             <p class="help">Use this when you want a standard top-headlines pull with a specific label and NewsAPI/GNews category.</p>
             <form method="POST" action="{{ url_for('admin.fetch_articles') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="mode" value="top">
                 <div class="field">
                     <label for="category-label">Label</label>
@@ -228,6 +230,7 @@
             <h2 style="font-size: 20px; margin-bottom: 12px;">Other / Custom Query Fetch</h2>
             <p class="help">Use this when you want a one-off search query instead of a preset category. You can send a different query to GNews if needed.</p>
             <form method="POST" action="{{ url_for('admin.fetch_articles') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="mode" value="query">
                 <div class="field">
                     <label for="custom-label">Label</label>
