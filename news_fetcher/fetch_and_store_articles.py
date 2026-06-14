@@ -2188,6 +2188,11 @@ def publish_edition():
     db.session.add(edition)
     db.session.flush()
 
+    # Selection above balances political/outlet diversity, which can pick a
+    # lower-scored story before a higher-scored one. Display order should
+    # still reflect importance, so sort by headline_score after selection.
+    top_20.sort(key=lambda pair: pair[0].headline_score or 0, reverse=True)
+
     updated_repeat_count = 0
     carryover_count = 0
     for rank, (story, has_updates) in enumerate(top_20, 1):
