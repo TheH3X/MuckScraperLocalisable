@@ -40,7 +40,6 @@ RSS_FEEDS = [
     # International / Additional Networks
     "https://www.aljazeera.com/xml/rss/all.xml",
     "https://nationalpost.com/feed/",
-    "https://www.telegraph.co.uk/rss.xml",
     "https://torontosun.com/feed/",
     "https://feeds.abcnews.com/abcnews/topstories",
     "https://www.cbsnews.com/latest/rss/main",
