@@ -6,6 +6,12 @@
 
 ---
 
+## Live Deployment
+
+**[muckscraper.news](https://muckscraper.news)** runs on this codebase. It publishes two balanced headline editions per day and is a working example of what MuckScraper produces: story grouping across outlets, bias labeling, AI-generated summaries, and ranked coverage from across the political spectrum.
+
+---
+
 ## Screenshots
 
 ### Main Feed
