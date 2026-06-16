@@ -56,6 +56,7 @@ MuckScraper fetches articles from multiple news APIs and RSS feeds on a schedule
 
 - **Backend:** Python, Flask, SQLAlchemy
 - **Database:** PostgreSQL with pgvector
+- **Search:** Meilisearch
 - **News Data:** NewsAPI and GNews, with RSS support
 - **LLM Runtime:** Ollama-compatible local models
 - **Embeddings:** `nomic-embed-text`
@@ -73,24 +74,35 @@ muckscraper/
 │   ├── app.py                      # Main Flask entry point
 │   ├── models.py                   # SQLAlchemy models
 │   ├── filters.py                  # Jinja filters and display helpers
+│   ├── constants.py                # Shared constants (topics, bias buckets, etc.)
+│   ├── article_signals.py          # Article engagement and signal tracking
+│   ├── search.py                   # Meilisearch integration
+│   ├── story_view.py               # Story view helpers
 │   ├── blueprints/
 │   │   ├── admin.py                # Admin and maintenance routes
 │   │   ├── auth.py                 # Login/logout routes
-│   │   ├── personal.py             # Edition and authenticated reader routes
 │   │   └── public.py               # Public reader routes
 │   ├── static/                     # Shared static assets
 │   └── templates/                  # Jinja templates
 ├── migrations/                     # Alembic migration files
 ├── news_fetcher/
+│   ├── Dockerfile                  # Scheduler image
 │   ├── fetch_and_store_articles.py # Ingestion, grouping, and edition publishing
 │   ├── rss_fetcher.py              # RSS ingestion helpers
 │   ├── scheduler.py                # Scheduled fetch runner
 │   ├── scraper.py                  # Scrape pipeline and fallback logic
 │   ├── story_grouper.py            # Story clustering logic
 │   ├── summarizer.py               # Story and article summaries
-│   └── topic_classifier.py         # Topic classification helpers
+│   ├── topic_classifier.py         # Topic classification helpers
+│   ├── headline_generator.py       # AI headline generation for grouped stories
+│   ├── allsides_lookup.py          # AllSides bias data lookup
+│   ├── outlet_bias_llm.py          # LLM-based outlet bias scoring
+│   ├── backfill_images.py          # Utility: backfill missing story images
+│   ├── cleanup_duplicates.py       # Utility: deduplicate articles and stories
+│   └── merge_outlets.py            # Utility: merge duplicate outlet records
 ├── tests/                          # Automated tests
-├── create_admin.py                 # Admin user creation script
+├── boot.sh                         # Docker app entrypoint
+├── bootstrap_admin.py              # Admin user creation script
 ├── docker-compose.yml              # Local stack definition
 ├── Dockerfile                      # App image
 ├── requirements.txt                # Python dependencies
@@ -148,7 +160,7 @@ MuckScraper can be extended with personal workflow hooks, such as n8n webhooks f
 ## Current Features
 
 ### Editions and ranking
-- Four scheduled editions per day
+- Configurable scheduled editions per day
 - 20-story edition target
 - Repeats held back unless there is meaningful new coverage
 - Carry-over logic for underfilled editions
@@ -160,6 +172,7 @@ MuckScraper can be extended with personal workflow hooks, such as n8n webhooks f
 - NewsAPI and GNews support
 - RSS ingestion support
 - Duplicate article detection by URL and normalized title/outlet checks
+- Full-text search across articles and stories via Meilisearch
 
 ### Scraping and reliability
 - Full article scraping during ingestion
@@ -209,6 +222,7 @@ Most model-facing logic lives in:
 - `news_fetcher/story_grouper.py`
 - `news_fetcher/headline_generator.py`
 - `news_fetcher/outlet_bias_llm.py`
+- `news_fetcher/allsides_lookup.py` (bias data source)
 
 ### Scrape and grouping tuning
 
