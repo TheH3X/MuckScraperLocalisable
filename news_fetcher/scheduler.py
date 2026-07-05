@@ -669,8 +669,56 @@ def _notify_fetch_report(report_payload):
         logging.warning(f"  [n8n] Fetch report webhook failed ({e}) — continuing normally")
 
 
+def _broadcast_step(status, current_step, started_at, steps_completed, steps_remaining, ollama_up):
+    payload = {
+        "status": status,
+        "current_step": current_step,
+        "started_at": started_at.isoformat() if started_at else None,
+        "steps_completed": steps_completed,
+        "steps_remaining": steps_remaining,
+        "ollama_up": ollama_up,
+    }
+    _save_json_setting("pipeline_live_status", payload)
+
+
+def _clear_pipeline_status(status="idle", finished_at=None):
+    payload = {
+        "status": status,
+        "current_step": None,
+        "started_at": None,
+        "finished_at": finished_at.isoformat() if finished_at else None,
+        "steps_completed": [],
+        "steps_remaining": [],
+        "ollama_up": None,
+    }
+    _save_json_setting("pipeline_live_status", payload)
+
+
 def run_all_fetches(run_full_pipeline=True):
     logging.info("=== Starting scheduled fetch run ===")
+    run_started_at = datetime.utcnow()
+    steps_completed = []
+    
+    # Build list of steps based on pipeline mode
+    steps_remaining = [f"Fetching: {f['label']}" for f in SCHEDULED_FETCHES]
+    steps_remaining.append("Fetching RSS feeds")
+    
+    if run_full_pipeline:
+        steps_remaining.extend([
+            "Retrying unrated outlets",
+            "Syncing AllSides bias ratings",
+            "Headline ranking (Initial)",
+            "Targeted Right RSS Enrichment",
+            "Headline ranking (Right)",
+            "Targeted Left RSS Enrichment",
+            "Headline ranking (Left)",
+            "Publishing edition",
+            "Processing current edition",
+            "Exporting static site"
+        ])
+    
+    _broadcast_step("running", "Initializing...", run_started_at, steps_completed, steps_remaining, None)
+
     with app.app_context():
         ollama_state = {
             "up_at_start": False,
@@ -699,7 +747,12 @@ def run_all_fetches(run_full_pipeline=True):
 
         # Fetch all categories
         for fetch in SCHEDULED_FETCHES:
-            logging.info(f"--- Fetching: {fetch['label']} ---")
+            step_name = f"Fetching: {fetch['label']}"
+            if step_name in steps_remaining:
+                steps_remaining.remove(step_name)
+            
+            _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
+            logging.info(f"--- {step_name} ---")
             try:
                 topic_metrics = fetch_and_store_articles(
                     fetch["label"],
@@ -728,8 +781,13 @@ def run_all_fetches(run_full_pipeline=True):
                     "status": "error",
                     "reason": str(e),
                 }
+            steps_completed.append(step_name)
 
         # Run RSS fetch for major wire services and networks
+        step_name = "Fetching RSS feeds"
+        if step_name in steps_remaining:
+            steps_remaining.remove(step_name)
+        _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
         logging.info("--- Fetching RSS feeds ---")
         try:
             rss_metrics = fetch_and_store_rss()
@@ -750,9 +808,15 @@ def run_all_fetches(run_full_pipeline=True):
                 "status": "error",
                 "reason": str(e),
             }
+        steps_completed.append(step_name)
 
         if run_full_pipeline:
             # Run Bias Checker ONCE after all fetches
+            step_name = "Retrying unrated outlets"
+            if step_name in steps_remaining:
+                steps_remaining.remove(step_name)
+            _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
+            
             logging.info("--- Retrying unrated outlets (Bias Checker) ---")
             _check_ollama_status_for_report(ollama_state, "before_retry_unrated_outlets")
             try:
@@ -763,8 +827,14 @@ def run_all_fetches(run_full_pipeline=True):
                 logging.error(f"Error checking outlet bias: {e}")
                 run_metrics["status"] = "partial_error"
                 run_metrics["steps"]["retry_unrated_outlets"] = {"status": "error", "reason": str(e)}
+            steps_completed.append(step_name)
 
             # Run AllSides sync once a month
+            step_name = "Syncing AllSides bias ratings"
+            if step_name in steps_remaining:
+                steps_remaining.remove(step_name)
+            _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
+
             last_sync = get_last_allsides_sync()
             if last_sync is None or (datetime.utcnow() - last_sync).days >= 30:
                 logging.info("--- Syncing AllSides bias ratings ---")
@@ -784,6 +854,12 @@ def run_all_fetches(run_full_pipeline=True):
                     "status": "skipped",
                     "days_since_last_sync": days_since,
                 }
+            steps_completed.append(step_name)
+
+            step_name = "Headline ranking (Initial)"
+            if step_name in steps_remaining:
+                steps_remaining.remove(step_name)
+            _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
 
             logging.info("--- Running headline ranking ---")
             _check_ollama_status_for_report(ollama_state, "before_headline_ranking")
@@ -814,15 +890,33 @@ def run_all_fetches(run_full_pipeline=True):
                 run_metrics["status"] = "partial_error"
                 initial_ranking = {"status": "error", "reason": str(e)}
                 run_metrics["steps"]["headline_ranking_initial"] = initial_ranking
+            steps_completed.append(step_name)
+
+            step_name = "Targeted Right RSS Enrichment"
+            if step_name in steps_remaining:
+                steps_remaining.remove(step_name)
+            _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
 
             right_ranking, right_second_pass_ranking = _run_targeted_rss_enrichment_pass(
                 RIGHT_RSS_ENRICHMENT_CONFIG, run_metrics, ollama_state, initial_ranking
             )
+            steps_completed.append(step_name)
+
+            step_name = "Targeted Left RSS Enrichment"
+            if step_name in steps_remaining:
+                steps_remaining.remove(step_name)
+            _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
 
             _run_targeted_rss_enrichment_pass(
                 LEFT_RSS_ENRICHMENT_CONFIG, run_metrics, ollama_state,
                 right_second_pass_ranking or right_ranking,
             )
+            steps_completed.append(step_name)
+
+            step_name = "Publishing edition"
+            if step_name in steps_remaining:
+                steps_remaining.remove(step_name)
+            _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
 
             logging.info("--- Publishing edition ---")
             try:
@@ -832,6 +926,12 @@ def run_all_fetches(run_full_pipeline=True):
                 logging.error(f"Error publishing edition: {e}")
                 run_metrics["status"] = "partial_error"
                 run_metrics["steps"]["publish_edition"] = {"status": "error", "reason": str(e)}
+            steps_completed.append(step_name)
+
+            step_name = "Processing current edition"
+            if step_name in steps_remaining:
+                steps_remaining.remove(step_name)
+            _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
 
             logging.info("--- Processing current edition content ---")
             _check_ollama_status_for_report(ollama_state, "before_process_current_edition")
@@ -842,6 +942,12 @@ def run_all_fetches(run_full_pipeline=True):
                 logging.error(f"Error processing edition content: {e}")
                 run_metrics["status"] = "partial_error"
                 run_metrics["steps"]["process_current_edition"] = {"status": "error", "reason": str(e)}
+            steps_completed.append(step_name)
+
+            step_name = "Exporting static site"
+            if step_name in steps_remaining:
+                steps_remaining.remove(step_name)
+            _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
 
             logging.info("--- Exporting static site ---")
             try:
@@ -851,6 +957,7 @@ def run_all_fetches(run_full_pipeline=True):
                 logging.error(f"Error exporting static site: {e}")
                 run_metrics["status"] = "partial_error"
                 run_metrics["steps"]["static_export"] = {"status": "error", "reason": str(e)}
+            steps_completed.append(step_name)
         else:
             run_metrics["steps"]["retry_unrated_outlets"] = {"status": "skipped", "reason": "fetch_only_run"}
             run_metrics["steps"]["allsides_sync"] = {"status": "skipped", "reason": "fetch_only_run"}
@@ -893,6 +1000,8 @@ def run_all_fetches(run_full_pipeline=True):
 
         # Notify n8n pipeline is done — triggers Ollama machine suspend
         _notify_n8n()
+        
+        _clear_pipeline_status(status=run_metrics["status"], finished_at=datetime.fromisoformat(run_metrics["finished_at"]))
 
     logging.info("=== Scheduled fetch run complete ===")
 

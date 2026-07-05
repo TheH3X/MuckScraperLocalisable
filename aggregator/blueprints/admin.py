@@ -970,3 +970,141 @@ def metrics():
         "last_headline_site_metrics": _load_json_setting("last_headline_site_metrics"),
         "scrape_outcome_history": _load_json_setting("scrape_outcome_history_v1"),
     })
+
+
+@admin.route("/pipeline-status")
+@login_required
+def pipeline_status():
+    status = _load_json_setting("pipeline_live_status") or {
+        "status": "idle",
+        "current_step": None,
+        "started_at": None,
+        "finished_at": None,
+        "steps_completed": [],
+        "steps_remaining": [],
+        "ollama_up": None,
+    }
+    
+    last_run_metrics = _load_json_setting("last_run_metrics") or {}
+    last_headline_metrics = _load_json_setting("last_headline_site_metrics") or {}
+    
+    return jsonify({
+        "live_status": status,
+        "last_run_summary": {
+            "input_articles": last_run_metrics.get("totals", {}).get("input_articles", 0),
+            "stored_articles": last_run_metrics.get("totals", {}).get("stored", 0),
+            "stories_touched": last_run_metrics.get("totals", {}).get("stories_touched", 0),
+            "scrape_statuses": last_run_metrics.get("totals", {}).get("scrape_statuses", {}),
+            "headline_readable": last_headline_metrics.get("scrape", {}).get("readable_articles", 0)
+        }
+    })
+
+
+@admin.route("/db-stats")
+@login_required
+def db_stats():
+    from aggregator.models import Article, Story, Outlet, Edition
+    from aggregator.search import get_index_stats
+    
+    total_articles = db.session.query(func.count(Article.id)).scalar() or 0
+    articles_with_embeddings = db.session.query(func.count(Article.id)).filter(Article.embedding != None).scalar() or 0
+    articles_without_embeddings = total_articles - articles_with_embeddings
+    
+    total_stories = db.session.query(func.count(Story.id)).scalar() or 0
+    total_outlets = db.session.query(func.count(Outlet.id)).scalar() or 0
+    total_editions = db.session.query(func.count(Edition.id)).scalar() or 0
+    
+    # Try to get postgres relation size for articles table
+    try:
+        articles_size_bytes = db.session.execute(db.text("SELECT pg_total_relation_size('articles')")).scalar()
+    except Exception:
+        articles_size_bytes = 0
+
+    meili_stats = get_index_stats()
+    
+    return jsonify({
+        "articles": {
+            "total": total_articles,
+            "with_embeddings": articles_with_embeddings,
+            "without_embeddings": articles_without_embeddings,
+            "size_bytes": articles_size_bytes,
+        },
+        "stories": {"total": total_stories},
+        "outlets": {"total": total_outlets},
+        "editions": {"total": total_editions},
+        "meilisearch": meili_stats,
+    })
+
+
+@admin.route("/purge-embeddings", methods=["POST"])
+@login_required
+def purge_embeddings():
+    from aggregator.models import Article
+    try:
+        updated = db.session.execute(db.update(Article).values(embedding=None)).rowcount
+        db.session.commit()
+        logger.info(f"Purged vector embeddings from {updated} articles.")
+        return jsonify({"status": "ok", "cleared": updated})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error purging embeddings: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@admin.route("/purge-articles", methods=["POST"])
+@login_required
+def purge_articles():
+    from aggregator.models import Article, Story
+    try:
+        deleted_articles = db.session.query(Article).count()
+        deleted_stories = db.session.query(Story).count()
+        
+        db.session.execute(db.text("TRUNCATE stories, articles CASCADE"))
+        db.session.commit()
+        
+        logger.info(f"Purged {deleted_articles} articles and {deleted_stories} stories via TRUNCATE.")
+        return jsonify({
+            "status": "ok", 
+            "articles_deleted": deleted_articles,
+            "stories_deleted": deleted_stories
+        })
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error purging articles: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@admin.route("/purge-raw-payloads", methods=["POST"])
+@login_required
+def purge_raw_payloads():
+    from aggregator.models import RawArticlePayload
+    try:
+        deleted = db.session.query(RawArticlePayload).delete()
+        db.session.commit()
+        logger.info(f"Purged {deleted} raw payloads.")
+        return jsonify({"status": "ok", "deleted": deleted})
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error purging raw payloads: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@admin.route("/vacuum-db", methods=["POST"])
+@login_required
+def vacuum_db():
+    try:
+        connection = db.engine.raw_connection()
+        connection.set_isolation_level(0) # AUTOCOMMIT
+        cursor = connection.cursor()
+        cursor.execute("VACUUM ANALYZE articles;")
+        cursor.execute("VACUUM ANALYZE stories;")
+        cursor.execute("VACUUM ANALYZE edition_stories;")
+        cursor.execute("VACUUM ANALYZE article_topics;")
+        cursor.execute("VACUUM ANALYZE story_topics;")
+        cursor.close()
+        connection.close()
+        logger.info("Vacuum analyze completed successfully.")
+        return jsonify({"status": "ok", "message": "Vacuum completed."})
+    except Exception as e:
+        logger.error(f"Error running vacuum: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
