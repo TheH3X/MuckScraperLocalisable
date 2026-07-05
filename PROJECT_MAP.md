@@ -15,7 +15,6 @@ This file is a working map of the current repository layout, what each major fil
 ├── LICENSE                      - Repository license.
 ├── README.md                    - Main project overview and setup instructions.
 ├── TODO.md                      - Active roadmap and backlog notes.
-├── boot.sh                      - Container entrypoint for app startup.
 ├── catcode.sh                   - Local helper script.
 ├── create_admin.py              - Utility script to create an admin user.
 ├── docker-compose.yml           - Primary local Docker Compose stack.

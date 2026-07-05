@@ -101,7 +101,6 @@ muckscraper/
 │   ├── cleanup_duplicates.py       # Utility: deduplicate articles and stories
 │   └── merge_outlets.py            # Utility: merge duplicate outlet records
 ├── tests/                          # Automated tests
-├── boot.sh                         # Docker app entrypoint
 ├── bootstrap_admin.py              # Admin user creation script
 ├── docker-compose.yml              # Local stack definition
 ├── Dockerfile                      # App image
@@ -138,9 +137,7 @@ git clone https://github.com/grregis/muckscraper.git
 cd muckscraper
 cp .env.sample .env
 # Edit .env with your API keys, local model host, and admin login
-docker compose up -d --build postgres meilisearch app
-docker compose exec app python bootstrap_admin.py
-docker compose up -d scheduler
+docker compose up -d --build
 ```
 
 Then open `http://localhost:5000`.
