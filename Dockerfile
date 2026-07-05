@@ -46,10 +46,11 @@ RUN playwright install chromium
 # Copy the app code
 COPY aggregator ./aggregator
 COPY news_fetcher ./news_fetcher
-COPY boot.sh ./boot.sh
+COPY migrations ./migrations
+COPY bootstrap_admin.py .
 
 # Expose the port the app runs on
 EXPOSE 5000
 
 # Run the app
-ENTRYPOINT ["./boot.sh"]
+CMD sh -c "python bootstrap_admin.py && exec gunicorn -b 0.0.0.0:5000 aggregator.app:app"
