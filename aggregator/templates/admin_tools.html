@@ -305,6 +305,43 @@
 
     <div class="section">
         <div class="section-head">
+            <div class="section-title">Pipeline Monitor</div>
+            <div class="section-copy">Live status of the scheduled fetch and AI processing tasks.</div>
+        </div>
+        <div class="tool-list">
+            <div class="tool-card" style="grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <!-- Status Box -->
+                <div>
+                    <div class="tool-card-title">Live Status</div>
+                    <div class="status-box" style="margin-top: 0;">
+                        <div class="status-line">
+                            <span class="status-pill idle" id="pipeline-status-pill">Idle</span>
+                            <span style="font-size: 13px; font-weight: 600;" id="pipeline-current-step">Waiting for next run</span>
+                        </div>
+                        <div class="status-meta">
+                            <span id="pipeline-time-elapsed"></span><br>
+                            <span id="pipeline-last-run">Loading...</span>
+                        </div>
+                    </div>
+                    <div style="margin-top: 20px;">
+                        <div class="tool-card-title">Last Run Summary</div>
+                        <div class="status-meta" id="pipeline-last-summary" style="font-size: 13px; line-height: 1.5;">Loading...</div>
+                    </div>
+                </div>
+                <!-- Steps List -->
+                <div>
+                    <div class="tool-card-title">Pipeline Steps</div>
+                    <div id="pipeline-steps-list" style="font-size: 13px; color: var(--text-muted); line-height: 1.8; max-height: 200px; overflow-y: auto; padding-right: 10px; font-family: monospace;">
+                        <!-- JS injected -->
+                        <em>Loading steps...</em>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-head">
             <div class="section-title">Operational</div>
             <div class="section-copy">Short-running actions you might use during normal day-to-day monitoring or when the AI side is offline or behind.</div>
         </div>
@@ -467,6 +504,62 @@
             </div>
         </div>
     </div>
+
+    <div class="section">
+        <div class="section-head">
+            <div class="section-title">Database Management</div>
+            <div class="section-copy">Tools to manage database size, vector embeddings, and bulk purges.</div>
+        </div>
+        <div class="tool-list">
+            <!-- DB Stats -->
+            <div class="tool-card" style="grid-column: 1 / -1;">
+                <div class="tool-card-title" style="display: flex; align-items: center; justify-content: space-between;">
+                    Database Statistics
+                    <button onclick="fetchDbStats()" class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;">Refresh</button>
+                </div>
+                <div id="db-stats-content" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; font-size: 13px; color: var(--text-muted); margin-top: 10px;">
+                    Loading stats...
+                </div>
+            </div>
+            
+            <div class="tool-card">
+                <div class="tool-card-title">Purge Vector Embeddings</div>
+                <p>Removes all vector embeddings from articles. Story grouping will fall back to titles until re-embedded.</p>
+                <div class="meta-row">
+                    <span class="badge badge-danger">⚠ Danger</span>
+                </div>
+                <button onclick="purgeDb('embeddings')" class="btn btn-danger" type="button">Purge Embeddings</button>
+            </div>
+            
+            <div class="tool-card">
+                <div class="tool-card-title">Purge All Articles</div>
+                <p>Deletes all articles and empty stories. This is a full content reset.</p>
+                <div class="meta-row">
+                    <span class="badge badge-danger">⚠ Danger</span>
+                </div>
+                <button onclick="purgeDb('articles')" class="btn btn-danger" type="button">Purge Articles</button>
+            </div>
+            
+            <div class="tool-card">
+                <div class="tool-card-title">Purge Raw Payloads</div>
+                <p>Deletes raw API payloads kept for debugging to free space.</p>
+                <div class="meta-row">
+                    <span class="badge badge-broad">⚠ Broad change</span>
+                </div>
+                <button onclick="purgeDb('raw-payloads')" class="btn btn-broad" type="button">Purge Payloads</button>
+            </div>
+            
+            <div class="tool-card">
+                <div class="tool-card-title">Vacuum Database</div>
+                <p>Reclaims disk space and updates planner stats. Run after a large purge.</p>
+                <div class="meta-row">
+                    <span class="badge">Maintenance</span>
+                </div>
+                <button onclick="vacuumDb()" class="btn" id="vacuum-btn" type="button">Vacuum DB</button>
+                <div class="status-meta" id="vacuum-status" style="margin-top: 10px;"></div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -590,8 +683,178 @@
 
     const savedTheme = localStorage.getItem('muckscraper-theme') || 'light';
     applyTheme(savedTheme);
+
+    function pollPipelineStatus() {
+        fetch('{{ url_for("admin.pipeline_status") }}')
+            .then(r => r.json())
+            .then(data => {
+                const live = data.live_status || {};
+                const summary = data.last_run_summary || {};
+                
+                // Update Pill & Current Step
+                const pill = document.getElementById('pipeline-status-pill');
+                const currentStep = document.getElementById('pipeline-current-step');
+                const pStatus = live.status || 'idle';
+                pill.className = `status-pill ${pStatus}`;
+                pill.textContent = pStatus === 'running' ? 'Running' : pStatus === 'idle' ? 'Idle' : pStatus === 'error' ? 'Error' : pStatus === 'partial_error' ? 'Partial Error' : 'Finished';
+                
+                if (pStatus === 'running') {
+                    currentStep.textContent = live.current_step || 'Processing...';
+                    if (live.started_at) {
+                        const start = new Date(live.started_at + 'Z');
+                        const now = new Date();
+                        const diffSec = Math.floor((now - start) / 1000);
+                        const mins = Math.floor(diffSec / 60);
+                        const secs = diffSec % 60;
+                        document.getElementById('pipeline-time-elapsed').textContent = `Elapsed: ${mins}m ${secs}s`;
+                    }
+                } else {
+                    currentStep.textContent = 'Waiting for next scheduled run';
+                    document.getElementById('pipeline-time-elapsed').textContent = '';
+                }
+                
+                if (live.started_at || live.finished_at) {
+                    let text = '';
+                    if (live.started_at) text += `Started: ${formatStatusTimestamp(live.started_at)}`;
+                    if (live.finished_at) text += ` · Finished: ${formatStatusTimestamp(live.finished_at)}`;
+                    document.getElementById('pipeline-last-run').textContent = text;
+                }
+                
+                // Update Summary
+                document.getElementById('pipeline-last-summary').innerHTML = `
+                    <strong>Stored:</strong> ${summary.stored_articles || 0} / ${summary.input_articles || 0} fetched<br>
+                    <strong>Stories touched:</strong> ${summary.stories_touched || 0}<br>
+                    <strong>Readable:</strong> ${summary.headline_readable || 0} articles
+                `;
+                
+                // Update Steps List
+                let stepsHtml = '';
+                (live.steps_completed || []).forEach(step => {
+                    stepsHtml += `<div style="color: var(--accent-dark);">[✓] ${step}</div>`;
+                });
+                if (pStatus === 'running' && live.current_step) {
+                    stepsHtml += `<div style="color: var(--broad-dark); font-weight: bold;">[>] ${live.current_step}</div>`;
+                }
+                (live.steps_remaining || []).forEach(step => {
+                    stepsHtml += `<div>[ ] ${step}</div>`;
+                });
+                
+                if (!stepsHtml) {
+                    stepsHtml = '<em>No active pipeline data</em>';
+                }
+                document.getElementById('pipeline-steps-list').innerHTML = stepsHtml;
+            });
+    }
+
+    function fetchDbStats() {
+        const container = document.getElementById('db-stats-content');
+        container.innerHTML = 'Loading stats...';
+        fetch('{{ url_for("admin.db_stats") }}')
+            .then(r => r.json())
+            .then(data => {
+                const mb = data.articles?.size_bytes ? (data.articles.size_bytes / (1024 * 1024)).toFixed(1) + ' MB' : 'Unknown';
+                
+                const meili = data.meilisearch?.indexes || {};
+                const storiesKey = Object.keys(meili).find(k => k.includes('stories')) || 'stories';
+                const articlesKey = Object.keys(meili).find(k => k.includes('articles')) || 'articles';
+                const storiesCount = meili[storiesKey]?.numberOfDocuments || 0;
+                const articlesCount = meili[articlesKey]?.numberOfDocuments || 0;
+
+                container.innerHTML = `
+                    <div>
+                        <strong>Articles</strong><br>
+                        Total: ${data.articles?.total || 0}<br>
+                        With Vectors: ${data.articles?.with_embeddings || 0}<br>
+                        Table Size: ${mb}
+                    </div>
+                    <div>
+                        <strong>Content</strong><br>
+                        Stories: ${data.stories?.total || 0}<br>
+                        Outlets: ${data.outlets?.total || 0}<br>
+                        Editions: ${data.editions?.total || 0}
+                    </div>
+                    <div>
+                        <strong>Meilisearch</strong><br>
+                        Stories: ${storiesCount}<br>
+                        Articles: ${articlesCount}
+                    </div>
+                `;
+            }).catch(() => {
+                container.innerHTML = 'Failed to load stats.';
+            });
+    }
+
+    function purgeDb(target) {
+        let msg = '';
+        let url = '';
+        if (target === 'embeddings') {
+            msg = 'Are you sure you want to nullify all article vector embeddings? Story grouping will degrade until they are regenerated.';
+            url = '{{ url_for("admin.purge_embeddings") }}';
+        } else if (target === 'articles') {
+            msg = 'DANGER: Are you sure you want to delete ALL articles and stories? This is a complete content wipe.';
+            url = '{{ url_for("admin.purge_articles") }}';
+        } else if (target === 'raw-payloads') {
+            msg = 'Are you sure you want to delete all cached raw API responses?';
+            url = '{{ url_for("admin.purge_raw_payloads") }}';
+        }
+        
+        if (target === 'articles') {
+            if (confirm(msg)) {
+                if (!confirm('FINAL WARNING: This is irreversible. Click OK to proceed.')) return;
+            } else { return; }
+        } else {
+            if (!confirm(msg)) return;
+        }
+        
+        fetch(url, {
+            method: 'POST',
+            headers: { 'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content },
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'ok') {
+                alert('Success.\\n' + JSON.stringify(data, null, 2));
+                fetchDbStats();
+            } else {
+                alert('Error: ' + data.message);
+            }
+        }).catch(e => alert('Failed: ' + e));
+    }
+
+    function vacuumDb() {
+        const btn = document.getElementById('vacuum-btn');
+        const status = document.getElementById('vacuum-status');
+        btn.disabled = true;
+        btn.textContent = 'Running...';
+        status.textContent = 'Vacuuming tables, this may take a moment...';
+        
+        fetch('{{ url_for("admin.vacuum_db") }}', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content },
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'ok') {
+                status.textContent = 'Vacuum completed successfully.';
+                fetchDbStats();
+            } else {
+                status.textContent = 'Error: ' + data.message;
+            }
+        })
+        .catch(e => status.textContent = 'Failed: ' + e)
+        .finally(() => {
+            btn.disabled = false;
+            btn.textContent = 'Vacuum DB';
+        });
+    }
+
     pollSearchReindexStatus();
-    setInterval(pollSearchReindexStatus, 5000);
+    pollPipelineStatus();
+    fetchDbStats();
+    setInterval(() => {
+        pollSearchReindexStatus();
+        pollPipelineStatus();
+    }, 5000);
 </script>
 </body>
 </html>

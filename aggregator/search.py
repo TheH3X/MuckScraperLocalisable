@@ -284,6 +284,16 @@ def healthcheck():
         return False
 
 
+def get_index_stats():
+    if not meili_enabled():
+        return None
+    try:
+        stats = _request("GET", "/stats")
+        return stats
+    except SearchUnavailableError:
+        return None
+
+
 def main():
     from aggregator import create_app
 
