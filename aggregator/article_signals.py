@@ -64,15 +64,11 @@ def is_roundup_article(title=None, url=None):
 def bias_bucket_for_score(score):
     if score is None:
         return "unrated"
-    if score <= 1.5:
-        return "left"
-    if score <= 2.5:
-        return "lean_left"
-    if score <= 3.5:
-        return "center"
-    if score <= 4.5:
-        return "lean_right"
-    return "right"
+    
+    bucket = int(round(score))
+    if bucket < 1: bucket = 1
+    if bucket > 5: bucket = 5
+    return str(bucket)
 
 
 def low_value_article_reason(title=None, url=None):

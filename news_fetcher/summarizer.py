@@ -22,6 +22,9 @@ MODEL = os.environ.get("OLLAMA_MODEL", "")
 if not MODEL:
     logging.warning("OLLAMA_MODEL environment variable is not set. All summarization will fail.")
 
+from aggregator.country_config import get_config
+_cfg = get_config()
+
 
 def check_ollama_status():
     """Returns True if Ollama is reachable, False otherwise."""
@@ -163,12 +166,11 @@ def _contains_any(text, keywords):
 
 
 POLITICAL_ANALYSIS_KEYWORDS = {
-    "administration", "agency", "bill", "campaign", "congress", "court",
-    "democrat", "diplomat", "election", "executive order", "federal",
-    "governor", "government", "house ", "justice department", "law",
-    "lawsuit", "minister", "parliament", "policy", "president", "prime minister",
-    "republican", "ruling", "sanction", "senate", "tariff", "trump", "white house",
-}
+    "administration", "agency", "bill", "campaign", "court",
+    "diplomat", "election", "executive order", "federal",
+    "government", "law", "lawsuit", "minister", "policy", "president", 
+    "prime minister", "ruling", "sanction", "tariff",
+} | _cfg.get("political_keywords", set())
 
 PUBLIC_SAFETY_ANALYSIS_KEYWORDS = {
     "accident", "arrested", "attack", "blaze", "crash", "dead", "death",
@@ -179,10 +181,10 @@ PUBLIC_SAFETY_ANALYSIS_KEYWORDS = {
 
 BUSINESS_ANALYSIS_KEYWORDS = {
     "bank", "bankruptcy", "bond", "ceo", "company", "earnings", "economy",
-    "fed", "federal reserve", "finance", "inflation", "investor", "layoff",
+    "finance", "inflation", "investor", "layoff",
     "market", "merger", "mortgage", "price", "profit", "rate", "revenue",
-    "stock", "trade", "wall street",
-}
+    "stock", "trade",
+} | _cfg.get("business_keywords", set())
 
 
 def detect_analysis_type(obj):
@@ -194,16 +196,17 @@ def detect_analysis_type(obj):
     topics_lower = [t.lower() for t in topics]
     text = _analysis_text(obj)
 
-    # A story whose only topic is US Politics is high-confidence enough on its
+    # A story whose only topic is Politics is high-confidence enough on its
     # own: don't let rhetorical verbs ("attacks", "slams") in its headlines
     # fall through to PUBLIC_SAFETY_ANALYSIS_KEYWORDS, and don't require a
     # POLITICAL_ANALYSIS_KEYWORDS match that policy-speech headlines often lack.
-    if topics_lower == ['us politics']:
+    politics_topic = _cfg["topics"][0]["label"].lower()
+    if topics_lower == [politics_topic]:
         return 'politics'
 
     if _contains_any(text, PUBLIC_SAFETY_ANALYSIS_KEYWORDS):
         return 'default'
-    if any(t == 'us politics' for t in topics_lower) and _contains_any(text, POLITICAL_ANALYSIS_KEYWORDS):
+    if any(t == politics_topic for t in topics_lower) and _contains_any(text, POLITICAL_ANALYSIS_KEYWORDS):
         return 'politics'
     if any(t == 'sci/tech' for t in topics_lower):
         return 'science'
@@ -357,11 +360,8 @@ def generate_deep_report(story):
 
     analysis_type = detect_analysis_type(story)
 
-    # Group articles by bias category
-    left_articles = []
-    center_articles = []
-    right_articles = []
-    unrated_articles = []
+    # Group articles by exact bias category
+    bias_groups = {1: [], 2: [], 3: [], 4: [], 5: [], "unrated": []}
 
     prompt_articles, excluded_articles = _select_story_prompt_articles(story, limit=15)
     readable_articles = [
@@ -388,14 +388,14 @@ def generate_deep_report(story):
         score = article.bias_score
         if score is None and article.outlet:
             score = article.outlet.bias_score
+            
         if score is None:
-            unrated_articles.append(article)
-        elif score <= 2.5:
-            left_articles.append(article)
-        elif score <= 3.5:
-            center_articles.append(article)
+            bias_groups["unrated"].append(article)
         else:
-            right_articles.append(article)
+            bucket = int(round(score))
+            if bucket < 1: bucket = 1
+            if bucket > 5: bucket = 5
+            bias_groups[bucket].append(article)
 
     def format_articles(articles, label, include_empty=False):
         if not articles:
@@ -424,21 +424,29 @@ def generate_deep_report(story):
 
     # Build prompt based on analysis type
     if analysis_type == 'politics':
-        left_section = format_articles(left_articles, "LEFT-LEANING", include_empty=True)
-        center_section = format_articles(center_articles, "CENTER", include_empty=True)
-        right_section = format_articles(right_articles, "RIGHT-LEANING", include_empty=True)
-        unrated_section = format_articles(unrated_articles, "UNRATED", include_empty=True)
-        combined = left_section + center_section + right_section + unrated_section
+        combined = ""
+        availability_lines = []
+        prompt_structure_lines = []
+        
+        for i in range(1, 6):
+            label = _cfg["bias_labels"][i]
+            section = format_articles(bias_groups[i], label.upper(), include_empty=True)
+            combined += section
+            availability_lines.append(f"- {label} sources found: {len(bias_groups[i])}")
+            
+            prompt_structure_lines.append(
+                f"How {label} is covering it: [Only describe coverage if sources are listed. If none, write exactly: \"No {label} sources were found in the current coverage.\"]"
+            )
+            
+        unrated_section = format_articles(bias_groups["unrated"], "UNRATED", include_empty=True)
+        combined += unrated_section
+        availability_lines.append(f"- Unrated sources found: {len(bias_groups['unrated'])}")
 
         if not combined.strip():
             return None
 
-        source_availability = "\n".join([
-            f"- Left-leaning sources found: {len(left_articles)}",
-            f"- Center sources found: {len(center_articles)}",
-            f"- Right-leaning sources found: {len(right_articles)}",
-            f"- Unrated sources found: {len(unrated_articles)}",
-        ])
+        source_availability = "\n".join(availability_lines)
+        prompt_structure = "\n\n".join(prompt_structure_lines)
 
         prompt = f"""You are an experienced media analyst writing a detailed report on how different news outlets are covering the same political story.
 
@@ -453,11 +461,7 @@ Write a detailed analytical report using this EXACT format:
 
 The story: [2-3 sentences explaining what happened factually]
 
-How the left is covering it: [Only describe left-leaning coverage if left-leaning sources are listed above. If no left-leaning sources are listed, write exactly: "No left-leaning sources were found in the current coverage."]
-
-How the center is covering it: [Only describe center coverage if center sources are listed above. If no center sources are listed, write exactly: "No center sources were found in the current coverage."]
-
-How the right is covering it: [Only describe right-leaning coverage if right-leaning sources are listed above. If no right-leaning sources are listed, write exactly: "No right-leaning sources were found in the current coverage."]
+{prompt_structure}
 
 What's contested: [Where the different sides disagree most sharply, what facts or framings are in dispute]
 
@@ -469,7 +473,6 @@ Rules:
 - Use EXACTLY the labels shown above including the colon
 - Be specific about framing differences, not just topic differences
 - Do not infer, invent, or speculate about how a missing source bucket would cover the story
-- If a source bucket has no listed articles, use the exact "No ... sources were found" sentence for that section
 - Stay neutral and analytical in your own voice
 - No markdown, no extra formatting
 - Do not add any text before or after the structure above"""

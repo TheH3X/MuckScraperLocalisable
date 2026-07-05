@@ -378,16 +378,8 @@
                 <span class="article-date">Updated: <span class="local-date" data-utc="{{ article.last_updated.isoformat() }}Z">{{ article.last_updated.strftime('%B %d, %Y %H:%M') }}</span></span>
             {% endif %}
 
-            {% if article.outlet.bias_score == 1 %}
-                <span class="bias-tag bias-1">Left</span>
-            {% elif article.outlet.bias_score == 2 %}
-                <span class="bias-tag bias-2">Lean Left</span>
-            {% elif article.outlet.bias_score == 3 %}
-                <span class="bias-tag bias-3">Center</span>
-            {% elif article.outlet.bias_score == 4 %}
-                <span class="bias-tag bias-4">Lean Right</span>
-            {% elif article.outlet.bias_score == 5 %}
-                <span class="bias-tag bias-5">Right</span>
+            {% if article.outlet.bias_score %}
+                <span class="bias-tag bias-{{ article.outlet.bias_score | int }}">{{ bias_label(article.outlet.bias_score) }}</span>
             {% else %}
                 <span class="bias-tag bias-none">Unrated</span>
             {% endif %}

@@ -19,13 +19,11 @@ langfuse = Langfuse(
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "")
 MODEL = os.environ.get("OLLAMA_MODEL", "")
 
-BIAS_LABELS = {
-    1: "Left",
-    2: "Lean Left",
-    3: "Center",
-    4: "Lean Right",
-    5: "Right"
-}
+from aggregator.country_config import get_config
+_cfg = get_config()
+
+BIAS_LABELS = _cfg["bias_labels"]
+BIAS_DESCRIPTIONS = _cfg["bias_descriptions"]
 
 
 @observe()
@@ -79,12 +77,11 @@ def get_outlet_bias_from_llm(outlet_name):
     Ask Ollama to rate the political bias of a news outlet by name.
     Returns an integer 1-5 or None if it can't determine.
     """
-    prompt = f"""You are a media bias analyst. Rate the political bias of the news outlet "{outlet_name}" on this scale:
-1 = Left
-2 = Lean Left
-3 = Center
-4 = Lean Right
-5 = Right
+    country_name = _cfg.get("country_name", "the given country")
+    scale_text = "\n".join([f"{k} = {v} ({BIAS_DESCRIPTIONS[k]})" for k, v in BIAS_LABELS.items()])
+
+    prompt = f"""You are a media bias analyst for {country_name}. Rate the political bias of the news outlet "{outlet_name}" on this scale:
+{scale_text}
 
 Rules:
 - Respond with a single integer between 1 and 5 only
@@ -118,12 +115,11 @@ def get_article_bias_from_llm(title, content=None):
         snippet = content[:600].strip()
         article_text += f"\n\nContent snippet: {snippet}"
 
-    prompt = f"""You are a media bias analyst. Read the following news article and rate its political bias on this scale:
-1 = Left
-2 = Lean Left
-3 = Center
-4 = Lean Right
-5 = Right
+    country_name = _cfg.get("country_name", "the given country")
+    scale_text = "\n".join([f"{k} = {v} ({BIAS_DESCRIPTIONS[k]})" for k, v in BIAS_LABELS.items()])
+
+    prompt = f"""You are a media bias analyst for {country_name}. Read the following news article and rate its political bias on this scale:
+{scale_text}
 
 Consider the language used, framing, and perspective presented in the article itself.
 

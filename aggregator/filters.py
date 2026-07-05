@@ -36,13 +36,17 @@ def register_filters(app):
                     break
             if not start_marker:
                 return None
-            next_sections = [
+            from aggregator.country_config import get_config
+            _cfg = get_config()
+            dynamic_bias_sections = [f"How {_cfg['bias_labels'][i]} is covering it:" for i in range(1, 6)]
+            
+            next_sections = dynamic_bias_sections + [
                 "How the left is covering it:", "Why it matters:",
                 "What's the game or company:", "Key performances:",
                 "Market impact:", "What experts are saying:",
                 "Key details:", "Different perspectives:",
                 "What the research shows:", "What the coverage is saying:",
-                "The bigger picture:", "Market impact:"
+                "The bigger picture:"
             ]
             content = report.split(start_marker)[1]
             end_pos = len(content)
@@ -71,3 +75,24 @@ def register_filters(app):
         except Exception:
             pass
         return summary.strip()
+
+    @app.context_processor
+    def inject_bias_helpers():
+        from aggregator.country_config import get_config
+        _cfg = get_config()
+        
+        def bias_label(score):
+            if score is None: return ""
+            bucket = int(round(score))
+            if bucket < 1: bucket = 1
+            if bucket > 5: bucket = 5
+            return _cfg["bias_labels"][bucket]
+            
+        def bias_color_class(score):
+            if score is None: return ""
+            bucket = int(round(score))
+            if bucket <= 2: return "bias-left"
+            if bucket == 3: return "bias-center"
+            return "bias-right"
+
+        return dict(bias_label=bias_label, bias_color_class=bias_color_class)

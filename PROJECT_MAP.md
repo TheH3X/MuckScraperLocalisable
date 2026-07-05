@@ -58,7 +58,7 @@ This file is a working map of the current repository layout, what each major fil
 │                                  - Merges recent migration branches into one head.
 ├── news_fetcher/                - Fetching, scraping, ranking, grouping, and summarization pipeline.
 │   ├── Dockerfile               - Secondary image definition for fetcher workflows.
-│   ├── allsides_lookup.py       - Outlet bias lookup helpers.
+│   ├── outlet_bias_lookup.py    - Outlet bias lookup helpers.
 │   ├── backfill_images.py       - Backfill script for missing article images.
 │   ├── cleanup_duplicates.py    - Utility for duplicate article cleanup.
 │   ├── editorial_ranker.py      - Story ranking/editorial scoring helpers.

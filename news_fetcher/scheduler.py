@@ -31,60 +31,11 @@ logging.basicConfig(
 # Fetch runs can be more frequent than full edition publishing.
 FETCH_SCHEDULE_HOURS = os.environ.get("FETCH_SCHEDULE_HOURS") or "7,12,17,22"
 FULL_PIPELINE_HOURS = os.environ.get("FULL_PIPELINE_HOURS") or "7,17"
-TIMEZONE = "America/New_York"
+from aggregator.country_config import get_config
 
-SCHEDULED_FETCHES = [
-    # === NATIONAL / POLITICS ===
-    {
-        "label":          "US Politics",
-        "mode":           "query",
-        "country":        None,
-        "category":       None,
-        "query":          "US politics congress white house senate supreme court",
-        "gnews_query":    "US politics congress white house",
-        "gnews_category": None,
-    },
-    # === BUSINESS / ECONOMY ===
-    {
-        "label":          "Business & Economy",
-        "mode":           "top",
-        "country":        "us",
-        "category":       "business",
-        "query":          None,
-        "gnews_query":    None,
-        "gnews_category": "business",
-    },
-    # === SCIENCE / HEALTH ===
-    {
-        "label":          "Science & Health",
-        "mode":           "query",
-        "country":        None,
-        "category":       None,
-        "query":          "scientific breakthroughs medical research healthcare tech",
-        "gnews_query":    "science health research",
-        "gnews_category": "science",
-    },
-    # === SPORTS ===
-    {
-        "label":          "Sports",
-        "mode":           "top",
-        "country":        "us",
-        "category":       "sports",
-        "query":          None,
-        "gnews_query":    None,
-        "gnews_category": "sports",
-    },
-    # === WORLD NEWS ===
-    {
-        "label":          "World News",
-        "mode":           "query",
-        "country":        None,
-        "category":       None,
-        "query":          "international world global news conflicts diplomacy",
-        "gnews_query":    "world global news",
-        "gnews_category": "world",
-    },
-]
+_cfg = get_config()
+TIMEZONE = _cfg["timezone"]
+SCHEDULED_FETCHES = _cfg["scheduled_fetches"]
 
 app = create_app()
 SCRAPE_OUTCOME_HISTORY_KEY = "scrape_outcome_history_v1"

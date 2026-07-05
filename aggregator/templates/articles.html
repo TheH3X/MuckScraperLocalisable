@@ -855,19 +855,19 @@
                                 {% endfor %}
 
                                 <div style="display: flex; gap: 10px; margin-bottom: 20px; padding: 15px; background: rgba(0,0,0,0.02); border-radius: 12px; border: 1px solid var(--border);">
-                                    <!-- Left Group -->
+                                    <!-- Group 1 -->
                                     <div style="flex: 1; text-align: center; border-right: 1px solid var(--border); padding: 0 5px;">
-                                        <div style="font-size: 11px; font-weight: 800; color: #1a6bb5; text-transform: uppercase; margin-bottom: 8px; border-bottom: 2px solid #1a6bb5; padding-bottom: 4px;">Left</div>
+                                        <div style="font-size: 11px; font-weight: 800; color: #1a6bb5; text-transform: uppercase; margin-bottom: 8px; border-bottom: 2px solid #1a6bb5; padding-bottom: 4px;">{{ bias_label(1) }}</div>
                                         <div style="font-size: 24px; font-weight: 900; color: var(--text);">{{ counts.b1 + counts.b2 }}</div>
                                     </div>
-                                    <!-- Center Group -->
+                                    <!-- Group 2 -->
                                     <div style="flex: 1; text-align: center; border-right: 1px solid var(--border); padding: 0 5px;">
-                                        <div style="font-size: 11px; font-weight: 800; color: #888; text-transform: uppercase; margin-bottom: 8px; border-bottom: 2px solid #888; padding-bottom: 4px;">Center</div>
+                                        <div style="font-size: 11px; font-weight: 800; color: #888; text-transform: uppercase; margin-bottom: 8px; border-bottom: 2px solid #888; padding-bottom: 4px;">{{ bias_label(3) }}</div>
                                         <div style="font-size: 24px; font-weight: 900; color: var(--text);">{{ counts.b3 }}</div>
                                     </div>
-                                    <!-- Right Group -->
+                                    <!-- Group 3 -->
                                     <div style="flex: 1; text-align: center; padding: 0 5px;">
-                                        <div style="font-size: 11px; font-weight: 800; color: #b51a1a; text-transform: uppercase; margin-bottom: 8px; border-bottom: 2px solid #b51a1a; padding-bottom: 4px;">Right</div>
+                                        <div style="font-size: 11px; font-weight: 800; color: #b51a1a; text-transform: uppercase; margin-bottom: 8px; border-bottom: 2px solid #b51a1a; padding-bottom: 4px;">{{ bias_label(5) }}</div>
                                         <div style="font-size: 24px; font-weight: 900; color: var(--text);">{{ counts.b4 + counts.b5 }}</div>
                                     </div>
                                 </div>
@@ -880,9 +880,9 @@
                                         <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
                                         <button type="submit" class="btn btn-muted" style="width: 100%; padding: 10px 12px; font-weight: 700;">
                                             {% if story.enrichment_direction == 'right' %}
-                                                Fetch More Right-Leaning Coverage
+                                                Fetch More {{ bias_label(5) }} Coverage
                                             {% else %}
-                                                Fetch More Left-Leaning Coverage
+                                                Fetch More {{ bias_label(1) }} Coverage
                                             {% endif %}
                                         </button>
                                     </form>
@@ -909,16 +909,8 @@
                                     <a class="full-text-link" href="{{ url_for('public.view_article', article_id=article.id) }}">Full Summary & Text →</a>
 
                                     <div style="flex-basis: 100%; display: flex; align-items: center; gap: 8px; margin-top: 4px;">
-                                        {% if article.outlet.bias_score == 1 %}
-                                            <span class="bias-tag bias-1">Left</span>
-                                        {% elif article.outlet.bias_score == 2 %}
-                                            <span class="bias-tag bias-2">Lean Left</span>
-                                        {% elif article.outlet.bias_score == 3 %}
-                                            <span class="bias-tag bias-3">Center</span>
-                                        {% elif article.outlet.bias_score == 4 %}
-                                            <span class="bias-tag bias-4">Lean Right</span>
-                                        {% elif article.outlet.bias_score == 5 %}
-                                            <span class="bias-tag bias-5">Right</span>
+                                        {% if article.outlet.bias_score %}
+                                            <span class="bias-tag bias-{{ article.outlet.bias_score | int }}">{{ bias_label(article.outlet.bias_score) }}</span>
                                         {% else %}
                                             <span class="bias-tag bias-none">Unrated</span>
                                         {% endif %}
@@ -931,17 +923,7 @@
 
                                         {% if article.bias_score and article.bias_score != article.outlet.bias_score %}
                                             <span style="color:var(--text-faint); font-size:10px;">•</span>
-                                            {% if article.bias_score == 1 %}
-                                                <span class="bias-tag bias-1">Article: Left</span>
-                                            {% elif article.bias_score == 2 %}
-                                                <span class="bias-tag bias-2">Article: Lean Left</span>
-                                            {% elif article.bias_score == 3 %}
-                                                <span class="bias-tag bias-3">Article: Center</span>
-                                            {% elif article.bias_score == 4 %}
-                                                <span class="bias-tag bias-4">Article: Lean Right</span>
-                                            {% elif article.bias_score == 5 %}
-                                                <span class="bias-tag bias-5">Article: Right</span>
-                                            {% endif %}
+                                            <span class="bias-tag bias-{{ article.bias_score | int }}">Article: {{ bias_label(article.bias_score) }}</span>
                                         {% endif %}
 
                                         <span class="article-actions">

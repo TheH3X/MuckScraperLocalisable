@@ -341,7 +341,7 @@
                         {% if article.outlet.bias_score %}
                             {% set b = article.outlet.bias_score | int %}
                             <span class="bias-tag bias-{{ b }}">
-                                {% if b == 1 %}Left{% elif b == 2 %}Lean Left{% elif b == 3 %}Center{% elif b == 4 %}Lean Right{% elif b == 5 %}Right{% endif %}
+                                {{ bias_label(b) }}
                             </span>
                         {% endif %}
 	                        <span class="local-date" data-utc="{{ article.date.isoformat() }}Z">{{ article.date.strftime('%b %d, %Y') }}</span>

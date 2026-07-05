@@ -95,7 +95,7 @@ muckscraper/
 │   ├── summarizer.py               # Story and article summaries
 │   ├── topic_classifier.py         # Topic classification helpers
 │   ├── headline_generator.py       # AI headline generation for grouped stories
-│   ├── allsides_lookup.py          # AllSides bias data lookup
+│   ├── outlet_bias_lookup.py       # Bias data lookup
 │   ├── outlet_bias_llm.py          # LLM-based outlet bias scoring
 │   ├── backfill_images.py          # Utility: backfill missing story images
 │   ├── cleanup_duplicates.py       # Utility: deduplicate articles and stories
@@ -222,7 +222,7 @@ Most model-facing logic lives in:
 - `news_fetcher/story_grouper.py`
 - `news_fetcher/headline_generator.py`
 - `news_fetcher/outlet_bias_llm.py`
-- `news_fetcher/allsides_lookup.py` (bias data source)
+- `news_fetcher/outlet_bias_lookup.py` (bias data source)
 
 ### Scrape and grouping tuning
 

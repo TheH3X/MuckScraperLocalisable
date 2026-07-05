@@ -18,15 +18,10 @@ langfuse = Langfuse(
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "")
 MODEL       = os.environ.get("OLLAMA_MODEL", "")
 
-VALID_TOPICS = [
-    "US Politics",
-    "US News",
-    "International News",
-    "Sci/Tech",
-    "Sports",
-    "Buss/Fin",
-    "Other",
-]
+from aggregator.country_config import get_config
+
+_cfg = get_config()
+VALID_TOPICS = [t["label"] for t in _cfg["topics"]]
 
 
 @observe()
@@ -46,6 +41,7 @@ def classify_article(title, content_snippet=""):
         if clean:
             text += f"\n{clean}"
 
+    country_name = _cfg.get("country_name", "the given country")
     topics_list = "\n".join(f"- {t}" for t in VALID_TOPICS if t != "Other")
 
     prompt = f"""You are a news editor categorizing articles. You must respond with ONLY category names from the list below, one per line. No other text, no notes, no explanations, no parentheses.
@@ -53,20 +49,15 @@ def classify_article(title, content_snippet=""):
 Article: "{text}"
 
 Categories (choose only from these exact names):
-- US Politics
-- US News
-- International News
-- Sci/Tech
-- Sports
-- Buss/Fin
+{topics_list}
 - Other
 
 Rules:
 - Use EXACT category names only — do not create new categories
-- US Politics means US federal government, Congress, White House, elections, federal courts/policy, or any US government action or statement toward another country (diplomacy, sanctions, tariffs, military orders)
-- International News means events, governments, conflicts, or disasters in other countries. If a story is about a US government action toward another country, use BOTH US Politics and International News
-- US News means domestic US news that is NOT about government or politics — crime, accidents, disasters, lawsuits, local/state news, transportation, weather
-- Entertainment, celebrity, lifestyle, and human-interest stories belong to Other, not US News
+- Politics means federal government, parliament, elections, federal policy, or any government action or statement toward another country (diplomacy, sanctions, tariffs, military orders) for {country_name}
+- International News means events, governments, conflicts, or disasters in other countries. If a story is about {country_name} government action toward another country, use BOTH Politics and International News
+- News means domestic news in {country_name} that is NOT about government or politics — crime, accidents, disasters, lawsuits, local/state news, transportation, weather
+- Entertainment, celebrity, lifestyle, and human-interest stories belong to Other, not News
 - Sci/Tech means technology, science, research, AI, space — NOT general business news about tech companies (use Buss/Fin for stock/earnings stories)
 - Buss/Fin means financial markets, economics, corporate earnings, mergers — NOT general commerce
 - Sports contracts and player signings belong to Sports only, not Buss/Fin

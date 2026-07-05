@@ -6,7 +6,7 @@ from aggregator.article_signals import ROUNDUP_TITLE_PATTERNS, bias_bucket_for_s
 from aggregator.models import Article, Outlet, Story, Topic
 from newsapi import NewsApiClient
 from news_fetcher.outlet_bias_llm import get_outlet_bias_from_llm
-from news_fetcher.allsides_lookup import get_allsides_score
+from news_fetcher.outlet_bias_lookup import get_outlet_bias_score
 from news_fetcher.summarizer import summarize_story, check_ollama_status, generate_deep_report, summarize_article
 from news_fetcher.scraper import scrape_article
 from datetime import datetime
@@ -35,6 +35,10 @@ BLOCKED_SOURCES = [
     "pypi.org",
 ]
 
+from aggregator.country_config import get_config
+
+_cfg = get_config()
+
 BLOCKED_TITLE_KEYWORDS = [
     "starred",
     "forked",
@@ -50,29 +54,11 @@ BLOCKED_TITLE_KEYWORDS = [
     "added to npm",
     "new release:",
     "changelog:",
-    "box office",
-    "box score",
-    "game recap",
-    "highlights:",
-    "traded to",
-    "signs with",
-    "scores in",
-    "Nintendo",
-    "PlayStation",
-    "Xbox",
-    "Game review",
-    "Gameplay",
-    "eSports",
-    "patch notes",
-    "Twitch",
-    "Fortnite",
-    "Minecraft",
-    "Pokemon",
-]
+] + _cfg.get("blocked_title_keywords_extra", [])
 
 GROUPING_LOOKBACK_DAYS = int(os.getenv("MUCKSCRAPER_GROUPING_LOOKBACK_DAYS", "7"))
 
-BIAS_BUCKETS = ("left", "lean_left", "center", "lean_right", "right", "unrated")
+BIAS_BUCKETS = ("1", "2", "3", "4", "5", "unrated")
 
 
 def empty_store_metrics(topic_name, provider=None, input_articles=0):
@@ -401,7 +387,7 @@ def retry_unrated_outlets():
 
     for outlet in unrated:
         # Check AllSides lookup table first
-        as_score = get_allsides_score(outlet.name)
+        as_score = get_outlet_bias_score(outlet.name)
         if as_score is not None:
             logger.info(f"  AllSides rating found for {outlet.name}: {as_score}")
             outlet.bias_score = as_score
@@ -518,19 +504,7 @@ def normalize_source_name(name):
     name_lower = name.lower().strip()
 
     # Define normalization map
-    mapping = {
-        "npr topics": "NPR",
-        "home - cbsnews.com": "CBS News",
-        "pbs newshour": "PBS News",
-        "the associated press": "Associated Press",
-        "fox news": "Fox News",
-        "abc news": "ABC News",
-        "nbc news": "NBC News",
-        "the wall street journal": "WSJ",
-        "the new york times": "New York Times",
-        "the washington post": "Washington Post",
-        
-    }
+    mapping = _cfg.get("outlet_name_map", {})
 
     # Direct match in mapping
     if name_lower in mapping:
@@ -810,7 +784,7 @@ def store_articles(articles_data, topic_name, provider=None):
             image_url = None
 
         if not outlet:
-            as_score = get_allsides_score(source_name)
+            as_score = get_outlet_bias_score(source_name)
             if as_score is not None:
                 logger.info(f"  New outlet {source_name}: AllSides rating {as_score}")
                 bias_score = as_score
@@ -1047,8 +1021,10 @@ def review_ambiguous_grouping_matches(review_hours=24, max_articles=75):
     return {"status": "ok", "reviewed": reviewed, "reassigned": reassigned}
 
 
-def fetch_newsapi(topic_name, mode="top", query=None, country="us", category=None):
+def fetch_newsapi(topic_name, mode="top", query=None, country=None, category=None):
     """Fetch articles from NewsAPI and store them."""
+    if country is None:
+        country = _cfg["newsapi_country"]
     api_key = os.environ.get("NEWS_API_KEY", "")
     if not api_key:
         logger.warning("NEWS_API_KEY not set, skipping NewsAPI fetch.")
@@ -1162,7 +1138,7 @@ def fetch_gnews(topic_name, query=None, category=None):
             params = {
                 "category": category,
                 "lang":     "en",
-                "country":  "us",
+                "country":  _cfg["gnews_country"],
                 "max":      20,
                 "apikey":   api_key,
             }
@@ -1171,7 +1147,7 @@ def fetch_gnews(topic_name, query=None, category=None):
             url = "https://gnews.io/api/v4/top-headlines"
             params = {
                 "lang":    "en",
-                "country": "us",
+                "country": _cfg["gnews_country"],
                 "max":     20,
                 "apikey":  api_key,
             }
@@ -1704,11 +1680,13 @@ def cleanup_old_payloads():
 
 
 def fetch_and_store_articles(topic_name, mode="top", query=None,
-                              country="us", category=None,
+                              country=None, category=None,
                               gnews_query=None, gnews_category=None):
     """
     Main entry point. Fetches from both NewsAPI and GNews for a given topic.
     """
+    if country is None:
+        country = _cfg["newsapi_country"]
     newsapi_metrics = fetch_newsapi(topic_name, mode=mode, query=query,
                                     country=country, category=category)
     gnews_metrics = fetch_gnews(topic_name, query=gnews_query, category=gnews_category)
@@ -1875,7 +1853,7 @@ def sync_allsides_ratings():
     - Propagates any score changes to all articles for that outlet
     Run monthly via scheduler, or manually via admin menu.
     """
-    from news_fetcher.allsides_lookup import get_allsides_score
+    from news_fetcher.outlet_bias_lookup import get_outlet_bias_score
     from aggregator.models import Outlet
 
     logger.info("=== AllSides sync starting ===")
@@ -1885,7 +1863,7 @@ def sync_allsides_ratings():
     skipped = 0
 
     for outlet in outlets:
-        as_score = get_allsides_score(outlet.name)
+        as_score = get_outlet_bias_score(outlet.name)
 
         if as_score is None:
             skipped += 1
