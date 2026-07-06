@@ -18,6 +18,7 @@ langfuse = Langfuse(
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "")
 MODEL = os.environ.get("OLLAMA_MODEL", "")
+OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", 600))
 
 if not MODEL:
     logging.warning("OLLAMA_MODEL environment variable is not set. All summarization will fail.")
@@ -299,6 +300,7 @@ Rules:
 - No bullet points
 - No section labels
 - No markdown or prefatory text
+- Begin directly with the first sentence of the summary. Do not use phrases like "Here is the summary:".
 - Keep it sharp and readable for a front-page briefing
 
 Articles:
@@ -323,8 +325,12 @@ Executive Summary:"""
                 "model": MODEL,
                 "prompt": prompt,
                 "stream": False,
+                "options": {
+                    "num_predict": 400,
+                    "num_ctx": 4096,
+                }
             },
-            timeout=120,
+            timeout=OLLAMA_TIMEOUT,
         )
         response.raise_for_status()
 
@@ -459,18 +465,19 @@ Source availability:
 
 Write a detailed analytical report using this EXACT format:
 
-The story: [2-3 sentences explaining what happened factually]
+The story: [Write 2-3 sentences explaining what happened factually]
 
 {prompt_structure}
 
-What's contested: [Where the different sides disagree most sharply, what facts or framings are in dispute]
+What's contested: [Describe where the different sides disagree most sharply, what facts or framings are in dispute]
 
-What's missing: [What angles or perspectives seem absent from the coverage, what questions aren't being asked]
+What's missing: [Identify what angles or perspectives seem absent from the coverage, what questions aren't being asked]
 
-What's next: [One sentence on what to watch for]
+What's next: [Write one sentence on what to watch for]
 
 Rules:
 - Use EXACTLY the labels shown above including the colon
+- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
 - Be specific about framing differences, not just topic differences
 - Do not infer, invent, or speculate about how a missing source bucket would cover the story
 - Stay neutral and analytical in your own voice
@@ -478,7 +485,7 @@ Rules:
 - Do not add any text before or after the structure above"""
 
     elif analysis_type == 'science':
-        all_articles = left_articles + center_articles + right_articles + unrated_articles
+        all_articles = prompt_articles
         combined = format_all_articles(all_articles)
 
         if not combined.strip():
@@ -492,29 +499,30 @@ Below are articles covering the same story:
 
 Write a detailed analytical report using this EXACT format:
 
-The discovery or development: [2-3 sentences explaining what happened or was discovered factually]
+The discovery or development: [Write 2-3 sentences explaining what happened or was discovered factually]
 
-Why it matters: [The scientific or technological significance — what does this change or enable?]
+Why it matters: [Explain the scientific or technological significance — what does this change or enable?]
 
-What the research shows: [Key findings, data points, or technical details from the coverage]
+What the research shows: [Detail key findings, data points, or technical details from the coverage]
 
-Real world impact: [How this affects people, industries, or society in practical terms]
+Real world impact: [Explain how this affects people, industries, or society in practical terms]
 
-What experts are saying: [Notable quotes or expert opinions from the coverage. If none available, say "Expert commentary not available in current coverage."]
+What experts are saying: [Include notable quotes or expert opinions from the coverage. If none available, say "Expert commentary not available in current coverage."]
 
-What's still unknown: [Open questions, limitations of the research, or what needs further study]
+What's still unknown: [Note open questions, limitations of the research, or what needs further study]
 
-What's next: [One sentence on upcoming developments or what to watch for]
+What's next: [Write one sentence on upcoming developments or what to watch for]
 
 Rules:
 - Use EXACTLY the labels shown above including the colon
+- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
 - Focus on accuracy and significance over drama
 - Stay neutral and factual
 - No markdown, no extra formatting
 - Do not add any text before or after the structure above"""
 
     elif analysis_type == 'sports':
-        all_articles = left_articles + center_articles + right_articles + unrated_articles
+        all_articles = prompt_articles
         combined = format_all_articles(all_articles)
 
         if not combined.strip():
@@ -528,24 +536,25 @@ Below are articles covering the same story:
 
 Write a detailed report using this EXACT format:
 
-What happened: [2-3 sentences with the key facts — scores, results, or news]
+What happened: [Write 2-3 sentences with the key facts — scores, results, or news]
 
-Key performances: [Standout players, teams, or moments from the coverage. If not a game recap, describe the key people involved.]
+Key performances: [Describe standout players, teams, or moments from the coverage. If not a game recap, describe the key people involved.]
 
-The bigger picture: [What this means for standings, playoffs, championships, contracts, or the sport more broadly]
+The bigger picture: [Explain what this means for standings, playoffs, championships, contracts, or the sport more broadly]
 
-By the numbers: [Key stats, records, or figures mentioned in the coverage. If none available, say "Detailed statistics not available in current coverage."]
+By the numbers: [Include key stats, records, or figures mentioned in the coverage. If none available, say "Detailed statistics not available in current coverage."]
 
-What's next: [One sentence on upcoming games, decisions, or developments to watch]
+What's next: [Write one sentence on upcoming games, decisions, or developments to watch]
 
 Rules:
 - Use EXACTLY the labels shown above including the colon
+- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
 - Focus on facts and context over opinion
 - No markdown, no extra formatting
 - Do not add any text before or after the structure above"""
 
     elif analysis_type == 'business':
-        all_articles = left_articles + center_articles + right_articles + unrated_articles
+        all_articles = prompt_articles
         combined = format_all_articles(all_articles)
 
         if not combined.strip():
@@ -559,22 +568,23 @@ Below are articles covering the same story:
 
 Write a detailed analytical report using this EXACT format:
 
-The story: [2-3 sentences explaining what happened factually]
+The story: [Write 2-3 sentences explaining what happened factually]
 
-Market impact: [How markets, stocks, or prices have reacted based on the coverage]
+Market impact: [Describe how markets, stocks, or prices have reacted based on the coverage]
 
-What companies or sectors are affected: [Key players, industries, or markets involved and how they are impacted]
+What companies or sectors are affected: [Identify key players, industries, or markets involved and how they are impacted]
 
-What analysts are saying: [Expert or analyst opinions from the coverage. If none available, say "Analyst commentary not available in current coverage."]
+What analysts are saying: [Include expert or analyst opinions from the coverage. If none available, say "Analyst commentary not available in current coverage."]
 
-The broader economic picture: [How this fits into wider economic trends, policy, or conditions]
+The broader economic picture: [Explain how this fits into wider economic trends, policy, or conditions]
 
-Risks and opportunities: [Key risks or opportunities this creates for investors, businesses, or consumers]
+Risks and opportunities: [Identify key risks or opportunities this creates for investors, businesses, or consumers]
 
-What's next: [One sentence on key dates, decisions, or developments to watch]
+What's next: [Write one sentence on key dates, decisions, or developments to watch]
 
 Rules:
 - Use EXACTLY the labels shown above including the colon
+- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
 - Focus on market and economic significance
 - Stay neutral and factual
 - No markdown, no extra formatting
@@ -582,7 +592,7 @@ Rules:
 
     else:
         # Default — generic deep analysis
-        all_articles = left_articles + center_articles + right_articles + unrated_articles
+        all_articles = prompt_articles
         combined = format_all_articles(all_articles)
 
         if not combined.strip():
@@ -596,20 +606,21 @@ Below are articles covering the same story:
 
 Write a detailed analytical report using this EXACT format:
 
-The story: [2-3 sentences explaining what happened factually]
+The story: [Write 2-3 sentences explaining what happened factually]
 
-Why it matters: [The significance of this story — who it affects and how]
+Why it matters: [Explain the significance of this story — who it affects and how]
 
-Key details: [The most important facts, figures, or developments from the coverage]
+Key details: [List the most important facts, figures, or developments from the coverage]
 
-Different perspectives: [How different outlets or sources are framing this story. If coverage is uniform, say what angle is being emphasized.]
+Different perspectives: [Describe how different outlets or sources are framing this story. If coverage is uniform, say what angle is being emphasized.]
 
-What's missing: [What angles or questions seem absent from the coverage]
+What's missing: [Identify what angles or questions seem absent from the coverage]
 
-What's next: [One sentence on what to watch for]
+What's next: [Write one sentence on what to watch for]
 
 Rules:
 - Use EXACTLY the labels shown above including the colon
+- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
 - Stay neutral and analytical
 - Compare only the outlets and perspectives actually present in the article list
 - Do not use left/right political framing unless the story is explicitly about politics, government, law, elections, or policy
@@ -633,8 +644,12 @@ Rules:
                 "model": MODEL,
                 "prompt": prompt,
                 "stream": False,
+                "options": {
+                    "num_predict": 400,
+                    "num_ctx": 4096,
+                }
             },
-            timeout=180,
+            timeout=OLLAMA_TIMEOUT,
         )
         response.raise_for_status()
         result = response.json()
@@ -674,16 +689,17 @@ def summarize_article(article):
 
 Below is a news article. Write a concise briefing using EXACTLY this format:
 
-The big picture: [One direct sentence on what happened.]
+The big picture: [Write one direct sentence on what happened.]
 
-Why it matters: [1-2 short sentences on why this story matters.]
+Why it matters: [Write 1-2 short sentences on why this story matters.]
 
-Quick analysis: [1-2 short sentences on the framing, tension, consequence, uncertainty, or what stands out most.]
+Quick analysis: [Write 1-2 short sentences on the framing, tension, consequence, uncertainty, or what stands out most.]
 
-What's next: [One sentence on what to watch for next.]
+What's next: [Write one sentence on what to watch for next.]
 
 Rules:
 - Use EXACTLY the labels shown above including the colon
+- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
 - No bullets
 - Keep the full response to 4 short sections only
 - Be concrete, not generic
@@ -710,8 +726,12 @@ Summary:"""
                 "model": MODEL,
                 "prompt": prompt,
                 "stream": False,
+                "options": {
+                    "num_predict": 400,
+                    "num_ctx": 4096,
+                }
             },
-            timeout=120,
+            timeout=OLLAMA_TIMEOUT,
         )
         response.raise_for_status()
         result = response.json()
@@ -748,16 +768,17 @@ def generate_article_deep_analysis(article):
 
 Analyze this political article using EXACTLY this format:
 
-Core argument: [2-3 sentences summarizing the article's main thesis and factual basis]
+Core argument: [Write 2-3 sentences summarizing the article's main thesis and factual basis]
 
-How it frames the issue: [What assumptions, emphasis, or political framing the piece uses]
+How it frames the issue: [Describe what assumptions, emphasis, or political framing the piece uses]
 
-What evidence it relies on: [The main facts, sources, or claims used to support the argument]
+What evidence it relies on: [Identify the main facts, sources, or claims used to support the argument]
 
-What to question or watch: [Potential blind spots, unresolved questions, or what future reporting should clarify]
+What to question or watch: [Note potential blind spots, unresolved questions, or what future reporting should clarify]
 
 Rules:
 - Use EXACTLY the labels shown above including the colon
+- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
 - Stay analytical, not partisan
 - No markdown, no extra formatting
 - Do not add any text before or after the structure above
@@ -773,16 +794,17 @@ Analysis:"""
 
 Analyze this article using EXACTLY this format:
 
-What the article says: [2-3 sentences summarizing the core finding or development]
+What the article says: [Write 2-3 sentences summarizing the core finding or development]
 
-Technical substance: [The key mechanism, data, or technical concept explained in the article]
+Technical substance: [Describe the key mechanism, data, or technical concept explained in the article]
 
-Why this matters: [What the development changes in practical or scientific terms]
+Why this matters: [Explain what the development changes in practical or scientific terms]
 
-What remains uncertain: [Limitations, caveats, unanswered questions, or hype risk]
+What remains uncertain: [Note limitations, caveats, unanswered questions, or hype risk]
 
 Rules:
 - Use EXACTLY the labels shown above including the colon
+- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
 - Prioritize clarity and technical accuracy
 - No markdown, no extra formatting
 - Do not add any text before or after the structure above
@@ -798,16 +820,17 @@ Analysis:"""
 
 Analyze this article using EXACTLY this format:
 
-What happened: [2-3 sentences summarizing the business or market event]
+What happened: [Write 2-3 sentences summarizing the business or market event]
 
-What is driving it: [The main financial, operational, or policy factors behind it]
+What is driving it: [Explain the main financial, operational, or policy factors behind it]
 
-Who is affected: [The companies, sectors, investors, or consumers most affected]
+Who is affected: [Identify the companies, sectors, investors, or consumers most affected]
 
-What to watch next: [Risks, catalysts, or decision points that matter going forward]
+What to watch next: [Note risks, catalysts, or decision points that matter going forward]
 
 Rules:
 - Use EXACTLY the labels shown above including the colon
+- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
 - Focus on economic significance, not fluff
 - No markdown, no extra formatting
 - Do not add any text before or after the structure above
@@ -833,8 +856,12 @@ Analysis:"""
                 "model": MODEL,
                 "prompt": prompt,
                 "stream": False,
+                "options": {
+                    "num_predict": 400,
+                    "num_ctx": 4096,
+                }
             },
-            timeout=150,
+            timeout=OLLAMA_TIMEOUT,
         )
         response.raise_for_status()
         result = response.json()

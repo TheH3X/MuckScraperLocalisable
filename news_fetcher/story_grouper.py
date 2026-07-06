@@ -21,6 +21,7 @@ langfuse = Langfuse(
 
 OLLAMA_HOST     = os.environ.get("OLLAMA_HOST", "")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
+OLLAMA_TIMEOUT  = int(os.environ.get("OLLAMA_TIMEOUT", 600))
 
 SIMILARITY_THRESHOLD = 0.92
 LOWER_THRESHOLD = 0.68
@@ -107,7 +108,7 @@ def get_embedding(text):
         response = requests.post(
             f"{OLLAMA_HOST}/api/embeddings",
             json={"model": EMBEDDING_MODEL, "prompt": text},
-            timeout=15,
+            timeout=OLLAMA_TIMEOUT,
         )
         response.raise_for_status()
         embedding = response.json().get("embedding")
@@ -509,19 +510,23 @@ Rules:
 - Do not match if the stories contradict each other (e.g. "price drop" vs "price increase")
 - Do not match broad opinion or analysis to a news event unless it is explicitly anchored to that same concrete event or ongoing situation
 - Use the context snippets to distinguish between similar-sounding but different events
-- If it matches, respond with only the number of the matching story (e.g. "2")
-- If it does not match any story, respond with only "0"
-- Respond with a single number and nothing else
+- If it matches, respond with the number of the matching story
+- If it does not match any story, respond with 0
 
-Examples of correct NON-matches (should return 0):
-- "Meta announces layoffs" vs "Epic Games lays off 900 workers" -> 0 (different companies, different events)
-- "Measles outbreak in Michigan" vs "Measles outbreak in Washington state" -> 0 (same disease, different locations)
-- "UFC fighter suspended for PED use" vs "MLB player suspended for PED use" -> 0 (different sports, different athletes)
-- "iPhone security alert" vs "Chrome zero-day vulnerability" -> 0 (different platforms, different vulnerabilities)
-- "NPR funding ruling" vs "Pentagon press policy ruling" -> 0 (different court cases)
-- "Grocery chain closing 17 stores" vs "Restaurant chain closing locations" -> 0 (different companies)
-- "Gold prices fall amid Iran war" vs "Trump says no ceasefire with Iran" -> 0 (different topics: finance vs diplomacy)
-- "How the Iran war affects trade recovery" vs "Iranian official killed in strike" -> 0 (analysis piece vs news event)"""
+Respond ONLY with a JSON object in this EXACT format:
+{{"match_id": 0}}
+or
+{{"match_id": 2}}
+
+Examples of correct NON-matches (should return {{"match_id": 0}}):
+- "Meta announces layoffs" vs "Epic Games lays off 900 workers" -> {{"match_id": 0}} (different companies, different events)
+- "Measles outbreak in Michigan" vs "Measles outbreak in Washington state" -> {{"match_id": 0}} (same disease, different locations)
+- "UFC fighter suspended for PED use" vs "MLB player suspended for PED use" -> {{"match_id": 0}} (different sports, different athletes)
+- "iPhone security alert" vs "Chrome zero-day vulnerability" -> {{"match_id": 0}} (different platforms, different vulnerabilities)
+- "NPR funding ruling" vs "Pentagon press policy ruling" -> {{"match_id": 0}} (different court cases)
+- "Grocery chain closing 17 stores" vs "Restaurant chain closing locations" -> {{"match_id": 0}} (different companies)
+- "Gold prices fall amid Iran war" vs "Trump says no ceasefire with Iran" -> {{"match_id": 0}} (different topics: finance vs diplomacy)
+- "How the Iran war affects trade recovery" vs "Iranian official killed in strike" -> {{"match_id": 0}} (analysis piece vs news event)"""
 
 
 @observe()
@@ -547,22 +552,42 @@ def ask_ollama_for_match(article_title, candidate_stories, article_content=None,
     try:
         response = requests.post(
             f"{OLLAMA_HOST}/api/generate",
-            json={"model": model, "prompt": prompt, "stream": False},
-            timeout=30,
+            json={
+                "model": model, 
+                "prompt": prompt, 
+                "stream": False, 
+                "format": "json",
+                "options": {
+                    "num_predict": 100,
+                    "num_ctx": 2048,
+                }
+            },
+            timeout=OLLAMA_TIMEOUT,
         )
         response.raise_for_status()
         result = response.json().get("response", "").strip()
         langfuse_context.update_current_observation(output=result)
 
-        for token in result.split():
-            if token.isdigit():
-                match_index = int(token)
-                if 1 <= match_index <= len(candidate_stories):
-                    matched = candidate_stories[match_index - 1]
-                    logger.info(f"  [Grouper] Matched to story: '{matched.title}'")
-                    return matched
-                elif match_index == 0:
-                    return None
+        import json
+        match_index = -1
+        try:
+            data = json.loads(result)
+            if "match_id" in data:
+                match_index = int(data["match_id"])
+        except (json.JSONDecodeError, ValueError):
+            # Fallback
+            for token in result.split():
+                token = token.strip('",:{}')
+                if token.isdigit():
+                    match_index = int(token)
+                    break
+
+        if match_index > 0 and match_index <= len(candidate_stories):
+            matched = candidate_stories[match_index - 1]
+            logger.info(f"  [Grouper] Matched to story: '{matched.title}'")
+            return matched
+        elif match_index == 0:
+            return None
 
         return None
 

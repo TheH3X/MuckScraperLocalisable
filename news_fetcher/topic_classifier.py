@@ -17,6 +17,7 @@ langfuse = Langfuse(
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "")
 MODEL       = os.environ.get("OLLAMA_MODEL", "")
+OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", 600))
 
 from aggregator.country_config import get_config
 
@@ -63,8 +64,10 @@ Rules:
 - Sports contracts and player signings belong to Sports only, not Buss/Fin
 - Pick the most specific category — if it's clearly Sports, do not also add other categories
 - Maximum 2 categories per article unless truly necessary
-- If none apply, respond with only: Other
-- Your entire response must be category names only — no parentheses, no notes, no commentary"""
+- If none apply, use "Other"
+
+Respond ONLY with a JSON object in this format:
+{{"categories": ["Category1", "Category2"]}}"""
 
     langfuse_context.update_current_observation(
         input=prompt,
@@ -77,8 +80,13 @@ Rules:
                 "model":  MODEL,
                 "prompt": prompt,
                 "stream": False,
+                "format": "json",
+                "options": {
+                    "num_predict": 150,
+                    "num_ctx": 2048,
+                }
             },
-            timeout=30,
+            timeout=OLLAMA_TIMEOUT,
         )
         response.raise_for_status()
 
@@ -87,7 +95,16 @@ Rules:
             output=result
         )
 
-        lines  = [line.strip() for line in result.splitlines() if line.strip()]
+        import json
+        lines = []
+        try:
+            data = json.loads(result)
+            if "categories" in data and isinstance(data["categories"], list):
+                lines = [str(x).strip() for x in data["categories"]]
+            else:
+                lines = [result]
+        except json.JSONDecodeError:
+            lines = [line.strip() for line in result.splitlines() if line.strip()]
 
         matched = []
         for line in lines:

@@ -17,6 +17,7 @@ langfuse = Langfuse(
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "")
 MODEL       = os.environ.get("OLLAMA_MODEL", "")
+OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", 600))
 
 
 @observe()
@@ -50,9 +51,9 @@ Rules:
 - Maximum 15 words
 - Present tense, active voice
 - No punctuation at the end
-- No quotes around the headline
+- DO NOT wrap the headline in quotes
 - Do not include source names or outlet names
-- Respond with ONLY the headline, nothing else"""
+- DO NOT prefix the response with "Headline:" or "Here is the headline:". Begin immediately with the headline text."""
 
     langfuse_context.update_current_observation(
         input=prompt,
@@ -62,11 +63,15 @@ Rules:
         response = requests.post(
             f"{OLLAMA_HOST}/api/generate",
             json={
-                "model":  MODEL,
+                "model": MODEL,
                 "prompt": prompt,
                 "stream": False,
+                "options": {
+                    "num_predict": 100,
+                    "num_ctx": 2048,
+                }
             },
-            timeout=30,
+            timeout=OLLAMA_TIMEOUT,
         )
         response.raise_for_status()
 

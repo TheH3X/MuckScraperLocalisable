@@ -18,6 +18,7 @@ langfuse = Langfuse(
 
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "")
 MODEL = os.environ.get("OLLAMA_MODEL", "")
+OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", 600))
 
 from aggregator.country_config import get_config
 _cfg = get_config()
@@ -40,8 +41,13 @@ def _ask_ollama(prompt):
                 "model": MODEL,
                 "prompt": prompt,
                 "stream": False,
+                "format": "json",
+                "options": {
+                    "num_predict": 100,
+                    "num_ctx": 2048,
+                }
             },
-            timeout=30,
+            timeout=OLLAMA_TIMEOUT,
         )
         response.raise_for_status()
         result = response.json().get("response", "").strip()
@@ -58,15 +64,18 @@ def _parse_bias_score(raw, label):
     """Parse a 1-5 integer from Ollama's response."""
     if raw is None:
         return None
-    if raw.lower() == "unknown":
-        logger.info(f"  Ollama could not determine bias for: {label}")
-        return None
+    import json
     try:
-        score = int(raw)
+        data = json.loads(raw)
+        rating = data.get("rating")
+        if str(rating).lower() == "unknown":
+            logger.info(f"  Ollama could not determine bias for: {label}")
+            return None
+        score = int(rating)
         if 1 <= score <= 5:
             return score
         return None
-    except ValueError:
+    except (json.JSONDecodeError, ValueError, TypeError):
         logger.info(f"  Could not parse Ollama response for '{label}': {raw}")
         return None
 
@@ -84,12 +93,14 @@ def get_outlet_bias_from_llm(outlet_name):
 {scale_text}
 
 Rules:
-- Respond with a single integer between 1 and 5 only
-- No explanation, no punctuation, just the number
-- If you have never heard of the outlet or genuinely cannot determine its bias, respond with the single word: unknown
+- If you have never heard of the outlet or genuinely cannot determine its bias, the rating should be "unknown"
 
-Outlet: {outlet_name}
-Rating:"""
+Respond ONLY with a JSON object in this EXACT format:
+{{"rating": 3}}
+or
+{{"rating": "unknown"}}
+
+Outlet: {outlet_name}"""
 
     langfuse_context.update_current_observation(
         input=prompt,
@@ -124,14 +135,15 @@ def get_article_bias_from_llm(title, content=None):
 Consider the language used, framing, and perspective presented in the article itself.
 
 Rules:
-- Respond with a single integer between 1 and 5 only
-- No explanation, no punctuation, just the number
-- If you genuinely cannot determine the bias from the content, respond with the single word: unknown
+- If you genuinely cannot determine the bias from the content, the rating should be "unknown"
+
+Respond ONLY with a JSON object in this EXACT format:
+{{"rating": 3}}
+or
+{{"rating": "unknown"}}
 
 Article:
-{article_text}
-
-Rating:"""
+{article_text}"""
 
     langfuse_context.update_current_observation(
         input=prompt,

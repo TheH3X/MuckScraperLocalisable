@@ -49,11 +49,11 @@ def run_optional_headline_ranking():
     """
     try:
         from news_fetcher.headline_ranker import run_headline_ranking
-    except ImportError as e:
-        logging.info(f"--- Headline ranking skipped ({e}) ---")
+    except ImportError:
+        logging.info("--- Headline ranking skipped (private plugin not installed) ---")
         return {
             "status": "skipped",
-            "reason": str(e),
+            "reason": "private plugin not installed",
         }
 
     run_headline_ranking()
