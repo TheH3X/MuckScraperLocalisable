@@ -54,9 +54,9 @@ Categories (choose only from these exact names):
 
 Rules:
 - Use EXACT category names only — do not create new categories
-- Politics means federal government, parliament, elections, federal policy, or any government action or statement toward another country (diplomacy, sanctions, tariffs, military orders) for {country_name}
+- SA Politics means federal government, parliament, elections, federal policy, or any government action or statement toward another country (diplomacy, sanctions, tariffs, military orders) for {country_name}
 - International News means events, governments, conflicts, or disasters in other countries. If a story is about {country_name} government action toward another country, use BOTH Politics and International News
-- News means domestic news in {country_name} that is NOT about government or politics — crime, accidents, disasters, lawsuits, local/state news, transportation, weather
+- SA News means domestic news in {country_name} that is NOT about government or politics — crime, accidents, disasters, lawsuits, local/state news, transportation, weather
 - Entertainment, celebrity, lifestyle, and human-interest stories belong to Other, not News
 - Sci/Tech means technology, science, research, AI, space — NOT general business news about tech companies (use Buss/Fin for stock/earnings stories)
 - Buss/Fin means financial markets, economics, corporate earnings, mergers — NOT general commerce
