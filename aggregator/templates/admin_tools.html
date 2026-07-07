@@ -329,11 +329,19 @@
                     </div>
                 </div>
                 <!-- Steps List -->
-                <div>
-                    <div class="tool-card-title">Pipeline Steps</div>
-                    <div id="pipeline-steps-list" style="font-size: 13px; color: var(--text-muted); line-height: 1.8; max-height: 200px; overflow-y: auto; padding-right: 10px; font-family: monospace;">
-                        <!-- JS injected -->
-                        <em>Loading steps...</em>
+                <div style="display: flex; flex-direction: column; justify-content: space-between;">
+                    <div>
+                        <div class="tool-card-title">Pipeline Steps</div>
+                        <div id="pipeline-steps-list" style="font-size: 13px; color: var(--text-muted); line-height: 1.8; max-height: 200px; overflow-y: auto; padding-right: 10px; font-family: monospace;">
+                            <!-- JS injected -->
+                            <em>Loading steps...</em>
+                        </div>
+                    </div>
+                    <div style="margin-top: 20px;">
+                        <form method="POST" action="{{ url_for('admin.run_full_pipeline') }}">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-broad" style="width: 100%;">Run Full Pipeline</button>
+                        </form>
                     </div>
                 </div>
             </div>

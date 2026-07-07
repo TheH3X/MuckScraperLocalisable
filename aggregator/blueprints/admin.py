@@ -96,6 +96,31 @@ def _save_json_setting(key, payload):
     db.session.commit()
 
 
+def _run_background_tool(app, name, steps, func, *args, **kwargs):
+    with app.app_context():
+        from news_fetcher.scheduler import _broadcast_step, _clear_pipeline_status
+        from datetime import datetime
+        started_at = datetime.utcnow()
+        try:
+            _broadcast_step("running", f"Running: {name}", started_at, [], steps, None)
+            func(*args, **kwargs)
+            _clear_pipeline_status("success", datetime.utcnow())
+        except Exception as e:
+            logger.exception(f"Background tool error ({name}): {e}")
+            _clear_pipeline_status("error", datetime.utcnow())
+
+
+def dispatch_background_tool(name, steps, func, *args, **kwargs):
+    app = current_app._get_current_object()
+    thread = threading.Thread(
+        target=_run_background_tool,
+        args=(app, name, steps, func) + args,
+        kwargs=kwargs,
+        daemon=True
+    )
+    thread.start()
+
+
 def _search_reindex_status_payload():
     payload = _load_json_setting(SEARCH_REINDEX_STATUS_KEY)
     if payload:
@@ -324,6 +349,26 @@ def fetch_page():
 @login_required
 def tools_page():
     return render_template("admin_tools.html")
+
+
+@admin.route("/run-full-pipeline", methods=["POST"])
+@login_required
+def run_full_pipeline():
+    def _run_full(app):
+        with app.app_context():
+            try:
+                from news_fetcher.scheduler import run_all_fetches
+                run_all_fetches(run_full_pipeline=True)
+            except Exception as e:
+                logger.exception(f"Run full pipeline error: {e}")
+                from news_fetcher.scheduler import _clear_pipeline_status
+                from datetime import datetime
+                _clear_pipeline_status("error", datetime.utcnow())
+
+    app = current_app._get_current_object()
+    thread = threading.Thread(target=_run_full, args=(app,), daemon=True)
+    thread.start()
+    return redirect(url_for("admin.tools_page"))
 
 
 @admin.route("/articles")
@@ -571,11 +616,8 @@ def rate_article(article_id):
 def ollama_catchup_route():
     label = request.form.get("label", "")
     scrape_status = request.form.get("scrape_status", "").strip() or None
-    try:
-        from news_fetcher.fetch_and_store_articles import ollama_catchup
-        ollama_catchup()
-    except Exception as e:
-        logger.error(f"Catchup error: {e}")
+    from news_fetcher.fetch_and_store_articles import ollama_catchup
+    dispatch_background_tool("AI Catch-up", ["Auditing scrapes", "Generating embeddings", "Generating headlines", "Regrouping stories", "Retrying unrated outlets"], ollama_catchup)
     return redirect_to_articles(label, scrape_status)
 
 
@@ -600,7 +642,8 @@ def scrape_article_route(article_id):
 def scrape_all_missing():
     label = request.form.get("label", "")
     scrape_status = request.form.get("scrape_status", "").strip() or None
-    try:
+    
+    def _do_scrape():
         from news_fetcher.scraper import scrape_article, should_auto_rescrape_article
         candidates = Article.query.filter(
             (Article.content == None) |
@@ -614,8 +657,8 @@ def scrape_all_missing():
                 result = scrape_article(article.url, fallback_content=article.content)
                 apply_scrape_result(article, result)
             db.session.commit()
-    except Exception as e:
-        logger.error(f"Scrape all error: {e}")
+
+    dispatch_background_tool("Scrape Missing", ["Scraping missing article contents"], _do_scrape)
     return redirect_to_articles(label, scrape_status)
 
 
@@ -638,11 +681,8 @@ def rescrape_article_route(article_id):
 def force_regroup():
     label = request.form.get("label", "")
     scrape_status = request.form.get("scrape_status", "").strip() or None
-    try:
-        from news_fetcher.fetch_and_store_articles import force_regroup_all
-        force_regroup_all()
-    except Exception as e:
-        logger.exception(f"Force regroup error: {e}")
+    from news_fetcher.fetch_and_store_articles import force_regroup_all
+    dispatch_background_tool("Rebuild Story Grouping", ["Re-evaluating embeddings", "Regrouping stories"], force_regroup_all)
     return redirect_to_articles(label, scrape_status)
 
 
@@ -651,11 +691,8 @@ def force_regroup():
 def force_resummarize():
     label = request.form.get("label", "")
     scrape_status = request.form.get("scrape_status", "").strip() or None
-    try:
-        from news_fetcher.fetch_and_store_articles import force_resummarize_all
-        force_resummarize_all()
-    except Exception as e:
-        logger.exception(f"Force resummarize error: {e}")
+    from news_fetcher.fetch_and_store_articles import force_resummarize_all
+    dispatch_background_tool("Rebuild Story Summaries", ["Regenerating summaries for stories"], force_resummarize_all)
     return redirect_to_articles(label, scrape_status)
 
 
@@ -784,11 +821,8 @@ def ai_task_status(task_type, resource_id):
 def reclassify_articles():
     label = request.form.get("label", "")
     scrape_status = request.form.get("scrape_status", "").strip() or None
-    try:
-        from news_fetcher.fetch_and_store_articles import reclassify_all_articles
-        reclassify_all_articles()
-    except Exception as e:
-        logger.exception(f"Reclassify error: {e}")
+    from news_fetcher.fetch_and_store_articles import reclassify_all_articles
+    dispatch_background_tool("Reclassify Topics", ["Re-running topic classification"], reclassify_all_articles)
     return redirect_to_articles(label, scrape_status)
 
 
@@ -918,11 +952,8 @@ def scrape_blocklist():
 @login_required
 def audit_scrapes():
     label = request.form.get("label", "")
-    try:
-        from news_fetcher.fetch_and_store_articles import audit_existing_scrapes
-        audit_existing_scrapes()
-    except Exception as e:
-        logger.exception(f"Audit error: {e}")
+    from news_fetcher.fetch_and_store_articles import audit_existing_scrapes
+    dispatch_background_tool("Audit Stored Scrapes", ["Auditing existing article content"], audit_existing_scrapes)
     return redirect(url_for("admin.scrape_blocklist"))
 
 
@@ -945,11 +976,8 @@ def unblock_domain():
 def sync_allsides():
     label = request.form.get("label", "")
     scrape_status = request.form.get("scrape_status", "").strip() or None
-    try:
-        from news_fetcher.fetch_and_store_articles import sync_allsides_ratings
-        sync_allsides_ratings()
-    except Exception as e:
-        logger.exception(f"AllSides sync error: {e}")
+    from news_fetcher.fetch_and_store_articles import sync_allsides_ratings
+    dispatch_background_tool("Sync AllSides Ratings", ["Applying AllSides bias to outlets and articles"], sync_allsides_ratings)
     return redirect_to_articles(label, scrape_status)
 
 
