@@ -4,7 +4,7 @@
 from aggregator import create_app, db
 from aggregator.article_signals import ROUNDUP_TITLE_PATTERNS, bias_bucket_for_score, is_roundup_article, low_value_article_reason
 from aggregator.models import Article, Outlet, Story, Topic
-from newsapi import NewsApiClient
+
 from news_fetcher.outlet_bias_llm import get_outlet_bias_from_llm
 from news_fetcher.outlet_bias_lookup import get_outlet_bias_score
 from news_fetcher.summarizer import summarize_story, check_ollama_status, generate_deep_report, summarize_article
@@ -1037,27 +1037,35 @@ def fetch_newsapi(topic_name, mode="top", query=None, country=None, category=Non
             "stored": 0,
         }
 
-    newsapi = NewsApiClient(api_key=api_key)
-
     try:
+        import requests
         if mode == "query" and query:
             logger.info(f"[NewsAPI] Fetching query: {query}")
-            results = newsapi.get_everything(
-                q=query,
-                language="en",
-                sort_by="publishedAt",
-                page_size=100,
-            )
+            url = "https://newsapi.org/v2/everything"
+            params = {
+                "q": query,
+                "language": "en",
+                "sortBy": "publishedAt",
+                "pageSize": 100,
+                "apiKey": api_key,
+            }
         else:
             label = f"country={country}" if country else ""
             label += f" category={category}" if category else ""
             logger.info(f"[NewsAPI] Fetching top headlines ({label.strip()})")
-            kwargs = {"page_size": 100}
+            url = "https://newsapi.org/v2/top-headlines"
+            params = {
+                "pageSize": 100,
+                "apiKey": api_key,
+            }
             if country:
-                kwargs["country"] = country
+                params["country"] = country
             if category:
-                kwargs["category"] = category
-            results = newsapi.get_top_headlines(**kwargs)
+                params["category"] = category
+
+        response = requests.get(url, params=params, timeout=15)
+        response.raise_for_status()
+        results = response.json()
 
         raw_articles = results.get("articles", [])
         logger.info(f"[NewsAPI] Fetched {len(raw_articles)} articles")

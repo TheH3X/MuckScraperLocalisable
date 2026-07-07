@@ -444,19 +444,27 @@ def fetch_articles():
     gnews_query = request.form.get("gnews_query", "").strip() or None
     gnews_category = request.form.get("gnews_category", "").strip() or None
 
-    try:
-        from news_fetcher.fetch_and_store_articles import fetch_and_store_articles
-        fetch_and_store_articles(
-            topic_name=label or "Custom",
-            mode=mode,
-            query=query,
-            country=country,
-            category=category,
-            gnews_query=gnews_query,
-            gnews_category=gnews_category,
-        )
-    except Exception as e:
-        logger.error(f"Fetch error: {e}")
+    def _run_fetch(app, kwargs):
+        with app.app_context():
+            try:
+                from news_fetcher.fetch_and_store_articles import fetch_and_store_articles
+                fetch_and_store_articles(**kwargs)
+            except Exception as e:
+                logger.error(f"Background fetch error: {e}")
+
+    kwargs = {
+        "topic_name": label or "Custom",
+        "mode": mode,
+        "query": query,
+        "country": country,
+        "category": category,
+        "gnews_query": gnews_query,
+        "gnews_category": gnews_category,
+    }
+
+    app = current_app._get_current_object()
+    thread = threading.Thread(target=_run_fetch, args=(app, kwargs), daemon=True)
+    thread.start()
 
     return redirect_to_articles(label, scrape_status)
 
