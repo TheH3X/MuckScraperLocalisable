@@ -143,6 +143,15 @@
             margin-top: -6px;
             margin-bottom: 16px;
         }
+        .status-box { margin-top: 10px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border); background: rgba(90, 95, 82, 0.05); }
+        .status-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+        .status-pill { display: inline-flex; align-items: center; font-size: 11px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; border-radius: 999px; padding: 5px 10px; border: 1px solid var(--border); background: var(--surface); }
+        .status-pill.running { background: rgba(176, 138, 34, 0.18); color: #8d6d18; border-color: rgba(176, 138, 34, 0.25); }
+        .status-pill.success { background: rgba(90, 95, 82, 0.12); color: var(--accent-dark); border-color: rgba(90, 95, 82, 0.22); }
+        .status-pill.error { background: rgba(154, 114, 91, 0.18); color: #7b5a47; border-color: rgba(154, 114, 91, 0.22); }
+        .status-pill.idle { color: var(--text-muted); }
+        .status-meta { color: var(--text-faint); font-size: 12px; line-height: 1.45; margin-top: 6px; }
+        .tool-card-title { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 800; margin-bottom: 8px; }
         @media (max-width: 760px) {
             .topbar { padding: 16px 18px; }
             .container { margin: 28px auto; padding: 0 14px 32px; }
@@ -163,6 +172,45 @@
     <h1>Fetch Articles</h1>
     <p class="subtitle">Use a preset category to pull in the same kind of coverage the scheduler uses, or run a one-off fetch with your own label and query.</p>
 
+    <div class="section-title">Pipeline Monitor</div>
+    <div class="card" style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 40px;">
+        <!-- Status Box -->
+        <div>
+            <div class="tool-card-title">Live Status</div>
+            <div class="status-box" style="margin-top: 0;">
+                <div class="status-line">
+                    <span class="status-pill idle" id="pipeline-status-pill">Idle</span>
+                    <span style="font-size: 13px; font-weight: 600;" id="pipeline-current-step">Waiting for next run</span>
+                </div>
+                <div class="status-meta">
+                    <span id="pipeline-time-elapsed"></span><br>
+                    <span id="pipeline-last-run">Loading...</span>
+                </div>
+            </div>
+            <div style="margin-top: 20px;">
+                <div class="tool-card-title">Last Run Summary</div>
+                <div class="status-meta" id="pipeline-last-summary" style="font-size: 13px; line-height: 1.5;">Loading...</div>
+            </div>
+        </div>
+        <!-- Steps List -->
+        <div style="display: flex; flex-direction: column; justify-content: space-between;">
+            <div>
+                <div class="tool-card-title">Pipeline Steps</div>
+                <div id="pipeline-steps-list" style="font-size: 13px; color: var(--text-muted); line-height: 1.8; max-height: 200px; overflow-y: auto; padding-right: 10px; font-family: monospace;">
+                    <!-- JS injected -->
+                    <em>Loading steps...</em>
+                </div>
+            </div>
+            <div style="margin-top: 20px;">
+                <form method="POST" action="{{ url_for('admin.run_full_pipeline') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="next" value="{{ url_for('admin.fetch_page') }}">
+                    <button type="submit" class="btn" style="width: 100%;">Run Full Pipeline</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <div class="section-title">Preset Categories</div>
     <div class="preset-grid">
         {% for preset in fetch_presets %}
@@ -171,6 +219,7 @@
             <p>{{ preset.description }}</p>
             <form method="POST" action="{{ url_for('admin.fetch_articles') }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="next" value="{{ url_for('admin.fetch_page') }}">
                 <input type="hidden" name="label" value="{{ preset.label }}">
                 <input type="hidden" name="mode" value="{{ preset.mode }}">
                 <input type="hidden" name="country" value="{{ preset.country }}">
@@ -191,6 +240,7 @@
             <p class="help">Use this when you want a standard top-headlines pull with a specific label and NewsAPI/GNews category.</p>
             <form method="POST" action="{{ url_for('admin.fetch_articles') }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="next" value="{{ url_for('admin.fetch_page') }}">
                 <input type="hidden" name="mode" value="top">
                 <div class="field">
                     <label for="category-label">Label</label>
@@ -231,6 +281,7 @@
             <p class="help">Use this when you want a one-off search query instead of a preset category. You can send a different query to GNews if needed.</p>
             <form method="POST" action="{{ url_for('admin.fetch_articles') }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="next" value="{{ url_for('admin.fetch_page') }}">
                 <input type="hidden" name="mode" value="query">
                 <div class="field">
                     <label for="custom-label">Label</label>
@@ -251,6 +302,76 @@
 </div>
 
 <script>
+    function formatStatusTimestamp(value) {
+        if (!value) return '';
+        const date = new Date(value + 'Z');
+        return date.toLocaleString();
+    }
+    function pollPipelineStatus() {
+        fetch('{{ url_for("admin.pipeline_status") }}')
+            .then(r => r.json())
+            .then(data => {
+                const live = data.live_status || {};
+                const summary = data.last_run_summary || {};
+                
+                // Update Pill & Current Step
+                const pill = document.getElementById('pipeline-status-pill');
+                const currentStep = document.getElementById('pipeline-current-step');
+                const pStatus = live.status || 'idle';
+                pill.className = `status-pill ${pStatus}`;
+                pill.textContent = pStatus === 'running' ? 'Running' : pStatus === 'idle' ? 'Idle' : pStatus === 'error' ? 'Error' : pStatus === 'partial_error' ? 'Partial Error' : 'Finished';
+                
+                if (pStatus === 'running') {
+                    currentStep.textContent = live.current_step || 'Processing...';
+                    if (live.started_at) {
+                        const start = new Date(live.started_at + 'Z');
+                        const now = new Date();
+                        const diffSec = Math.floor((now - start) / 1000);
+                        const mins = Math.floor(diffSec / 60);
+                        const secs = diffSec % 60;
+                        document.getElementById('pipeline-time-elapsed').textContent = `Elapsed: ${mins}m ${secs}s`;
+                    }
+                } else {
+                    currentStep.textContent = 'Waiting for next scheduled run';
+                    document.getElementById('pipeline-time-elapsed').textContent = '';
+                }
+                
+                if (live.started_at || live.finished_at) {
+                    let text = '';
+                    if (live.started_at) text += `Started: ${formatStatusTimestamp(live.started_at)}`;
+                    if (live.finished_at) text += ` · Finished: ${formatStatusTimestamp(live.finished_at)}`;
+                    document.getElementById('pipeline-last-run').textContent = text;
+                }
+                
+                // Update Summary
+                document.getElementById('pipeline-last-summary').innerHTML = `
+                    <strong>Stored:</strong> ${summary.stored_articles || 0} / ${summary.input_articles || 0} fetched<br>
+                    <strong>Stories touched:</strong> ${summary.stories_touched || 0}<br>
+                    <strong>Readable:</strong> ${summary.headline_readable || 0} articles
+                `;
+                
+                // Update Steps List
+                let stepsHtml = '';
+                (live.steps_completed || []).forEach(step => {
+                    stepsHtml += `<div style="color: var(--accent-dark);">[✓] ${step}</div>`;
+                });
+                if (pStatus === 'running' && live.current_step) {
+                    stepsHtml += `<div style="color: var(--accent-dark); font-weight: bold;">[>] ${live.current_step}</div>`;
+                }
+                (live.steps_remaining || []).forEach(step => {
+                    stepsHtml += `<div>[ ] ${step}</div>`;
+                });
+                
+                if (!stepsHtml) {
+                    stepsHtml = '<em>No active pipeline data</em>';
+                }
+                document.getElementById('pipeline-steps-list').innerHTML = stepsHtml;
+            });
+    }
+
+    pollPipelineStatus();
+    setInterval(pollPipelineStatus, 3000);
+
     function toggleTheme() {
         const current = document.documentElement.getAttribute('data-theme') || 'light';
         const next = current === 'light' ? 'dark' : 'light';
