@@ -284,7 +284,6 @@ def summarize_story(story):
         )
         langfuse_context.update_current_observation(
             metadata={
-                "model": MODEL,
                 "analysis_type": analysis_type,
                 "persona": persona,
                 "prompt_articles": len(prompt_articles),
@@ -400,7 +399,6 @@ def generate_deep_report(story):
         )
         langfuse_context.update_current_observation(
             metadata={
-                "model": MODEL,
                 "analysis_type": analysis_type,
                 "prompt_articles": len(prompt_articles),
                 "excluded_prompt_articles": len(excluded_articles),

@@ -1,7 +1,9 @@
 # muckscraperHeadlinesGoogleNEW/news_fetcher/story_grouper.py
 # news_fetcher/story_grouper.py
+
 import os
 import re
+import requests
 import unicodedata
 import numpy as np
 import logging
@@ -20,6 +22,7 @@ langfuse = Langfuse(
 
 OLLAMA_HOST     = os.environ.get("OLLAMA_HOST", "")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
+OLLAMA_TIMEOUT  = int(os.environ.get("OLLAMA_TIMEOUT", 600))
 
 SIMILARITY_THRESHOLD = 0.92
 LOWER_THRESHOLD = 0.68

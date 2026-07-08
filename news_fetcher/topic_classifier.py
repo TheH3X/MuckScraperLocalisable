@@ -62,7 +62,7 @@ def classify_article(title, content_snippet=""):
     Returns a list of topic label strings.
     Falls back to ["Other"] if Ollama is unavailable or classification fails.
     """
-    if not OLLAMA_HOST or not MODEL:
+    if os.environ.get("OLLAMA_HOST") == "":
         return ["Other"]
 
     # Use title + first 200 chars of content for classification

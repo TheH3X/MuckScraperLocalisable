@@ -82,8 +82,7 @@ or
 Outlet: {outlet_name}"""
 
     langfuse_context.update_current_observation(
-        input=prompt,
-        metadata={"model": MODEL}
+        input=prompt
     )
     raw = _ask_ollama(prompt)
     langfuse_context.update_current_observation(
@@ -125,8 +124,7 @@ Article:
 {article_text}"""
 
     langfuse_context.update_current_observation(
-        input=prompt,
-        metadata={"model": MODEL}
+        input=prompt
     )
     raw = _ask_ollama(prompt)
     langfuse_context.update_current_observation(
