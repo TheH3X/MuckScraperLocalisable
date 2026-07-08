@@ -176,7 +176,7 @@
         <h1>{% if topic.id %}Edit Topic{% else %}New Topic{% endif %}</h1>
     </div>
 
-    <form method="POST" action="">
+    <form method="POST" action="{{ url_for('admin.topic_update', topic_id=topic.id) if topic.id else url_for('admin.topic_create') }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         
         <div class="card">
@@ -188,9 +188,13 @@
                     <span class="help-text">Used for internal matching by the Ollama classifier. Must be exact.</span>
                 </div>
                 <div class="field">
-                    <label for="display_label">Display Label</label>
-                    <input type="text" id="display_label" name="display_label" value="{{ topic.display_label if topic.display_label else '' }}" required placeholder="e.g. Politics">
+                    <label for="label">Display Label</label>
+                    <input type="text" id="label" name="label" value="{{ topic.label if topic.label else '' }}" required placeholder="e.g. Politics">
                     <span class="help-text">Shown to end-users on the website.</span>
+                </div>
+                <div class="field">
+                    <label for="description">Description</label>
+                    <textarea id="description" name="description" placeholder="Short description for admin/tooltips...">{{ topic.description if topic.description else '' }}</textarea>
                 </div>
                 <div class="field">
                     <label for="icon">Icon / Emoji</label>

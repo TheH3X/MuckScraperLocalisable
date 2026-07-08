@@ -566,27 +566,7 @@ Rules:
 - No markdown, no extra formatting
 - Do not add any text before or after the structure above"""
 
-    # Check if any of the story's topics has a DB-stored deep report prompt override
-    db_deep_report_prompt = None
-    try:
-        from aggregator.models import Topic as _Topic
-        for topic_name in get_topics_list(story):
-            db_topic = _Topic.query.filter_by(name=topic_name).first()
-            if db_topic and db_topic.deep_report_prompt:
-                db_deep_report_prompt = db_topic.deep_report_prompt
-                break
-    except Exception:
-        pass
 
-    if db_deep_report_prompt:
-        try:
-            prompt = db_deep_report_prompt.format(
-                combined=combined,
-                source_availability=source_availability if analysis_type == 'politics' else '',
-                prompt_structure=prompt_structure if analysis_type == 'politics' else ''
-            )
-        except (KeyError, ValueError):
-            prompt = db_deep_report_prompt  # Use as-is if placeholders are wrong
 
     langfuse_context.update_current_observation(
         input=prompt,

@@ -1122,44 +1122,52 @@ def topic_new():
     return render_template("admin_topic_form.html", topic=None)
 
 
-@admin.route("/topics", methods=["POST"])
-@login_required
-def topic_create():
-    name = request.form.get("name", "").strip()
-    if not name:
-        return redirect(url_for("admin.topic_new"))
-
-    existing = Topic.query.filter_by(name=name).first()
-    if existing:
-        # Already exists — redirect to edit
-        return redirect(url_for("admin.topic_edit", topic_id=existing.id))
-
+def _read_topic_form_data(fallback_name):
     try:
         display_order = int(request.form.get("display_order", 99))
     except (ValueError, TypeError):
         display_order = 99
 
-    topic = Topic(
-        name=name,
-        label=request.form.get("label", "").strip() or name,
-        description=request.form.get("description", "").strip() or None,
-        icon=request.form.get("icon", "").strip() or None,
-        display_order=display_order,
-        is_active=request.form.get("is_active") == "on",
-        fetch_mode=request.form.get("fetch_mode", "").strip() or None,
-        fetch_country=request.form.get("fetch_country", "").strip() or None,
-        fetch_category=request.form.get("fetch_category", "").strip() or None,
-        fetch_query=request.form.get("fetch_query", "").strip() or None,
-        gnews_query=request.form.get("gnews_query", "").strip() or None,
-        gnews_category=request.form.get("gnews_category", "").strip() or None,
-        analysis_persona=request.form.get("analysis_persona", "").strip() or None,
-        classifier_hint=request.form.get("classifier_hint", "").strip() or None,
-        summary_prompt=request.form.get("summary_prompt", "").strip() or None,
-        deep_report_prompt=request.form.get("deep_report_prompt", "").strip() or None,
-    )
+    return {
+        "label": request.form.get("label", "").strip() or fallback_name,
+        "description": request.form.get("description", "").strip() or None,
+        "icon": request.form.get("icon", "").strip() or None,
+        "display_order": display_order,
+        "is_active": request.form.get("is_active") == "on",
+        "fetch_mode": request.form.get("fetch_mode", "").strip() or None,
+        "fetch_country": request.form.get("fetch_country", "").strip() or None,
+        "fetch_category": request.form.get("fetch_category", "").strip() or None,
+        "fetch_query": request.form.get("fetch_query", "").strip() or None,
+        "gnews_query": request.form.get("gnews_query", "").strip() or None,
+        "gnews_category": request.form.get("gnews_category", "").strip() or None,
+        "analysis_persona": request.form.get("analysis_persona", "").strip() or None,
+        "analysis_keywords_json": request.form.get("analysis_keywords_json", "").strip() or None,
+        "classifier_hint": request.form.get("classifier_hint", "").strip() or None,
+        "summary_prompt": request.form.get("summary_prompt", "").strip() or None,
+        "deep_report_prompt": request.form.get("deep_report_prompt", "").strip() or None,
+    }
+
+
+@admin.route("/topics", methods=["POST"])
+@login_required
+def topic_create():
+    name = request.form.get("name", "").strip()
+    if not name:
+        flash("Topic name is required.", "error")
+        return redirect(url_for("admin.topic_new"))
+
+    existing = Topic.query.filter_by(name=name).first()
+    if existing:
+        flash(f"Topic '{name}' already exists. Redirected to edit.", "warning")
+        return redirect(url_for("admin.topic_edit", topic_id=existing.id))
+
+    topic_data = _read_topic_form_data(name)
+    topic = Topic(name=name, **topic_data)
+    
     db.session.add(topic)
     db.session.commit()
     logger.info("Created topic id=%s name=%r", topic.id, topic.name)
+    flash(f"Topic '{topic.name}' created.", "success")
     return redirect(url_for("admin.topics_list"))
 
 
@@ -1180,32 +1188,26 @@ def topic_update(topic_id):
         conflict = Topic.query.filter(Topic.name == new_name, Topic.id != topic.id).first()
         if conflict:
             logger.warning("Cannot rename topic %s to %r — name already taken by topic %s", topic.id, new_name, conflict.id)
+            flash(f"Cannot rename to '{new_name}' — name already taken.", "error")
         else:
             topic.name = new_name
 
-    try:
-        display_order = int(request.form.get("display_order", topic.display_order))
-    except (ValueError, TypeError):
-        display_order = topic.display_order
+    topic_data = _read_topic_form_data(topic.name)
+    
+    # Restore the original display_order if the form was invalid (instead of defaulting to 99)
+    if "display_order" not in request.form:
+        topic_data["display_order"] = topic.display_order
+        try:
+            topic_data["display_order"] = int(request.form.get("display_order", topic.display_order))
+        except (ValueError, TypeError):
+            pass
 
-    topic.label = request.form.get("label", "").strip() or topic.name
-    topic.description = request.form.get("description", "").strip() or None
-    topic.icon = request.form.get("icon", "").strip() or None
-    topic.display_order = display_order
-    topic.is_active = request.form.get("is_active") == "on"
-    topic.fetch_mode = request.form.get("fetch_mode", "").strip() or None
-    topic.fetch_country = request.form.get("fetch_country", "").strip() or None
-    topic.fetch_category = request.form.get("fetch_category", "").strip() or None
-    topic.fetch_query = request.form.get("fetch_query", "").strip() or None
-    topic.gnews_query = request.form.get("gnews_query", "").strip() or None
-    topic.gnews_category = request.form.get("gnews_category", "").strip() or None
-    topic.analysis_persona = request.form.get("analysis_persona", "").strip() or None
-    topic.classifier_hint = request.form.get("classifier_hint", "").strip() or None
-    topic.summary_prompt = request.form.get("summary_prompt", "").strip() or None
-    topic.deep_report_prompt = request.form.get("deep_report_prompt", "").strip() or None
+    for key, value in topic_data.items():
+        setattr(topic, key, value)
 
     db.session.commit()
     logger.info("Updated topic id=%s name=%r", topic.id, topic.name)
+    flash(f"Topic '{topic.name}' updated.", "success")
     return redirect(url_for("admin.topics_list"))
 
 

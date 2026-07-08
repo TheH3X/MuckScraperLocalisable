@@ -12,15 +12,7 @@ logger = logging.getLogger(__name__)
 public = Blueprint("public", __name__)
 
 
-def check_ollama_status():
-    ollama_host = os.environ.get("OLLAMA_HOST", "")
-    if not ollama_host:
-        return False
-    try:
-        response = requests.get(f"{ollama_host}/api/tags", timeout=5)
-        return response.status_code == 200
-    except Exception:
-        return False
+from news_fetcher.summarizer import check_ollama_status
 
 
 @public.route("/")

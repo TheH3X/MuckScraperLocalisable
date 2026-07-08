@@ -767,7 +767,7 @@ def run_all_fetches(run_full_pipeline=True):
             logging.info(f"--- {step_name} ---")
             try:
                 topic_metrics = fetch_and_store_articles(
-                    fetch.display_label,
+                    fetch.name,
                     mode=fetch.fetch_mode,
                     query=fetch.fetch_query,
                     country=fetch.fetch_country,
