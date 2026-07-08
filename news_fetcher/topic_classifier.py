@@ -22,7 +22,42 @@ OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", 600))
 from aggregator.country_config import get_config
 
 _cfg = get_config()
-VALID_TOPICS = [t["label"] for t in _cfg["topics"]]
+
+
+def get_valid_topics():
+    """
+    Return the list of active topic names from the DB.
+    Falls back to country_config if no DB topics are available.
+    Must be called inside an active app context.
+    """
+    try:
+        from aggregator.models import Topic
+        db_topics = Topic.query.filter_by(is_active=True).order_by(Topic.display_order).all()
+        if db_topics:
+            return [t.name for t in db_topics]
+    except Exception as e:
+        logger.warning("[Classifier] Could not load topics from DB: %s — falling back to config", e)
+    # Fallback to country config
+    return [t["label"] for t in _cfg.get("topics", [])] or ["Other"]
+
+
+def get_topic_hints():
+    """
+    Return a dict of {topic_name: classifier_hint} for topics that have a hint set.
+    Must be called inside an active app context.
+    """
+    hints = {}
+    try:
+        from aggregator.models import Topic
+        for t in Topic.query.filter(
+            Topic.is_active == True,
+            Topic.classifier_hint.isnot(None),
+        ).all():
+            if t.classifier_hint:
+                hints[t.name] = t.classifier_hint.strip()
+    except Exception:
+        pass
+    return hints
 
 
 @observe()
@@ -43,7 +78,20 @@ def classify_article(title, content_snippet=""):
             text += f"\n{clean}"
 
     country_name = _cfg.get("country_name", "the given country")
-    topics_list = "\n".join(f"- {t}" for t in VALID_TOPICS if t != "Other")
+    valid_topics = get_valid_topics()
+    topic_hints = get_topic_hints()
+
+    # Build the topics list, appending any DB-stored hints inline
+    topic_lines = []
+    for t in valid_topics:
+        if t == "Other":
+            continue
+        hint = topic_hints.get(t)
+        if hint:
+            topic_lines.append(f"- {t}: {hint}")
+        else:
+            topic_lines.append(f"- {t}")
+    topics_list = "\n".join(topic_lines)
 
     prompt = f"""You are a news editor categorizing articles. You must respond with ONLY category names from the list below, one per line. No other text, no notes, no explanations, no parentheses.
 
@@ -108,7 +156,7 @@ Respond ONLY with a JSON object in this format:
 
         matched = []
         for line in lines:
-            for valid in VALID_TOPICS:
+            for valid in valid_topics:
                 if valid.lower() in line.lower():
                     if valid not in matched:
                         matched.append(valid)

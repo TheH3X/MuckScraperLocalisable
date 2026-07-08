@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 from flask import Blueprint, render_template, request, redirect, url_for, jsonify
 from aggregator.search import healthcheck as meili_healthcheck
 from aggregator.models import Article, Story, Topic, RawArticlePayload
-from aggregator.constants import TOPICS
 from aggregator.story_view import apply_aggregator_filter
 
 logger = logging.getLogger(__name__)
@@ -33,7 +32,6 @@ def index():
 def aggregator_headlines():
     from aggregator.models import Story, Article
     from datetime import datetime, timedelta
-    from aggregator.constants import TOPICS
     cutoff = datetime.utcnow() - timedelta(days=1)
     stories = Story.query.join(Article).group_by(Story.id).filter(
         Story.created_at >= cutoff,
@@ -46,7 +44,7 @@ def aggregator_headlines():
     return render_template(
         'articles.html',
         stories=stories,
-        topics=TOPICS,
+        topics=Topic.query.filter_by(is_active=True).order_by(Topic.display_order).all(),
         active_label=None,
         page=1,
         total_pages=1,

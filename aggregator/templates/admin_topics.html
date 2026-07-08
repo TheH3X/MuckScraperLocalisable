@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html data-theme="light">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon_32.png') }}">
+    <link rel="icon" type="image/png" sizes="128x128" href="{{ url_for('static', filename='favicon_128.png') }}">
+    <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='favicon_192.png') }}">
+    <link rel="icon" type="image/png" sizes="512x512" href="{{ url_for('static', filename='favicon_512.png') }}">
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='favicon_180.png') }}">
+    <title>Manage Topics — MuckScraper</title>
+    <style>
+        :root {
+            --accent: #5a5f52;
+            --accent-dark: #464b40;
+            --danger: #9a725b;
+            --danger-dark: #7b5a47;
+            --bg: #f8f9fa;
+            --surface: #ffffff;
+            --topbar-bg: #1e1e2e;
+            --topbar-text: #cdd6f4;
+            --text: #1a1a1a;
+            --text-muted: #555;
+            --text-faint: #888;
+            --border: #eef0f2;
+            --shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        [data-theme="dark"] {
+            --bg: #0f0f17;
+            --surface: #1a1a26;
+            --text: #e2e8f0;
+            --text-muted: #a0aec0;
+            --text-faint: #718096;
+            --border: #2d2d3f;
+            --shadow: 0 4px 12px rgba(0,0,0,0.25);
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }
+        .topbar {
+            background: var(--topbar-bg);
+            padding: 16px 40px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .topbar-left { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+        .topbar a { color: #89b4fa; text-decoration: none; font-size: 14px; font-weight: 600; }
+        .topbar-title { color: var(--topbar-text); font-size: 18px; font-weight: 800; }
+        .theme-toggle {
+            background: none;
+            border: 1px solid rgba(255,255,255,0.2);
+            color: var(--topbar-text);
+            padding: 6px 14px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .container { max-width: 1080px; margin: 48px auto; padding: 0 20px 48px; }
+        .header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; }
+        h1 { font-size: 32px; font-weight: 800; }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 10px 18px;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 700;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .btn:hover { background: var(--accent-dark); }
+        .btn-sm { padding: 6px 10px; font-size: 11px; border-radius: 6px; }
+        .btn-danger { background: var(--danger); }
+        .btn-danger:hover { background: var(--danger-dark); }
+        .btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+        .btn-secondary:hover { background: rgba(0,0,0,0.05); }
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            box-shadow: var(--shadow);
+            overflow: hidden;
+        }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 14px 20px; text-align: left; font-size: 14px; border-bottom: 1px solid var(--border); }
+        th { font-size: 12px; font-weight: 800; text-transform: uppercase; color: var(--text-faint); letter-spacing: 0.5px; background: rgba(0,0,0,0.02); }
+        td.actions { display: flex; gap: 8px; justify-content: flex-end; }
+        tr:last-child td { border-bottom: none; }
+        .badge { display: inline-flex; padding: 4px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; }
+        .badge-active { background: rgba(90, 95, 82, 0.12); color: var(--accent-dark); border: 1px solid rgba(90, 95, 82, 0.22); }
+        .badge-inactive { background: rgba(154, 114, 91, 0.12); color: var(--danger-dark); border: 1px solid rgba(154, 114, 91, 0.22); }
+        @media (max-width: 760px) {
+            .topbar { padding: 16px 18px; }
+            .container { margin: 28px auto; padding: 0 14px 32px; }
+            th, td { padding: 10px; }
+            .hide-mobile { display: none; }
+        }
+    </style>
+</head>
+<body>
+<div class="topbar">
+    <div class="topbar-left">
+        <span class="topbar-title">MuckScraper</span>
+        <a href="{{ url_for('admin.list_articles') }}">← Back to Feed</a>
+        <a href="{{ url_for('admin.tools_page') }}">Admin Tools</a>
+    </div>
+    <button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()">Dark Mode</button>
+</div>
+
+<div class="container">
+    <div class="header-row">
+        <h1>Manage Topics</h1>
+        <div style="display: flex; gap: 10px;">
+            <form method="POST" action="{{ url_for('admin.reseed_topics') }}" style="margin: 0;" onsubmit="return confirm('Are you sure you want to reseed topics from the country configuration? This will not delete existing custom topics, but will update or recreate missing defaults.');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-secondary">Reseed from Config</button>
+            </form>
+            <a href="{{ url_for('admin.topic_new') }}" class="btn">Add New Topic</a>
+        </div>
+    </div>
+
+    <div class="card">
+        <table>
+            <thead>
+                <tr>
+                    <th>Order</th>
+                    <th>Name</th>
+                    <th class="hide-mobile">Label</th>
+                    <th>Status</th>
+                    <th class="hide-mobile">Fetch Config</th>
+                    <th style="text-align: right;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for topic in topics %}
+                <tr style="{% if not topic.is_active %}opacity: 0.6;{% endif %}">
+                    <td>{{ topic.display_order }}</td>
+                    <td style="font-weight: 600;">{{ topic.name }}</td>
+                    <td class="hide-mobile">{{ topic.display_label }} {{ topic.icon }}</td>
+                    <td>
+                        {% if topic.is_active %}
+                            <span class="badge badge-active">Active</span>
+                        {% else %}
+                            <span class="badge badge-inactive">Inactive</span>
+                        {% endif %}
+                    </td>
+                    <td class="hide-mobile" style="color: var(--text-muted);">
+                        {% if topic.fetch_mode %}
+                            {{ topic.fetch_mode }} ({{ topic.fetch_category or topic.fetch_query or 'N/A' }})
+                        {% else %}
+                            <em>None</em>
+                        {% endif %}
+                    </td>
+                    <td class="actions">
+                        <a href="{{ url_for('admin.topic_edit', topic_id=topic.id) }}" class="btn btn-sm btn-secondary">Edit</a>
+                        <form method="POST" action="{{ url_for('admin.topic_toggle_active', topic_id=topic.id) }}" style="margin: 0;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-secondary">
+                                {% if topic.is_active %}Deactivate{% else %}Activate{% endif %}
+                            </button>
+                        </form>
+                        <form method="POST" action="{{ url_for('admin.topic_delete', topic_id=topic.id) }}" style="margin: 0;" onsubmit="return confirm('Are you sure you want to soft-delete this topic?');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">
+                        No topics found. Create one to get started.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    function toggleTheme() {
+        const current = document.documentElement.getAttribute('data-theme') || 'light';
+        const next = current === 'light' ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('muckscraper-theme', next);
+        document.getElementById('theme-toggle').textContent = next === 'dark' ? 'Light Mode' : 'Dark Mode';
+    }
+
+    const savedTheme = localStorage.getItem('muckscraper-theme') || 'light';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+    document.getElementById('theme-toggle').textContent = savedTheme === 'dark' ? 'Light Mode' : 'Dark Mode';
+</script>
+</body>
+</html>

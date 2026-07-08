@@ -35,11 +35,23 @@ from aggregator.country_config import get_config
 
 _cfg = get_config()
 TIMEZONE = _cfg["timezone"]
-SCHEDULED_FETCHES = _cfg["scheduled_fetches"]
 
 app = create_app()
 SCRAPE_OUTCOME_HISTORY_KEY = "scrape_outcome_history_v1"
 SCRAPE_OUTCOME_HISTORY_MAX_RUNS = 40
+
+
+def get_scheduled_fetches():
+    """Query active topics with fetch config from the DB.
+    Must be called inside an active app context.
+    """
+    from aggregator.models import Topic
+    return (
+        Topic.query
+        .filter(Topic.is_active == True, Topic.fetch_mode.isnot(None))
+        .order_by(Topic.display_order)
+        .all()
+    )
 
 
 def run_optional_headline_ranking():
@@ -699,8 +711,8 @@ def run_all_fetches(run_full_pipeline=True):
     run_started_at = datetime.utcnow()
     steps_completed = []
     
-    # Build list of steps based on pipeline mode
-    steps_remaining = [f"Fetching: {f['label']}" for f in SCHEDULED_FETCHES]
+    SCHEDULED_FETCHES = get_scheduled_fetches()
+    steps_remaining = [f"Fetching: {f.display_label}" for f in SCHEDULED_FETCHES]
     steps_remaining.append("Fetching RSS feeds")
     
     if run_full_pipeline:
@@ -747,23 +759,23 @@ def run_all_fetches(run_full_pipeline=True):
 
         # Fetch all categories
         for fetch in SCHEDULED_FETCHES:
-            step_name = f"Fetching: {fetch['label']}"
+            step_name = f"Fetching: {fetch.display_label}"
             if step_name in steps_remaining:
                 steps_remaining.remove(step_name)
-            
+
             _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
             logging.info(f"--- {step_name} ---")
             try:
                 topic_metrics = fetch_and_store_articles(
-                    fetch["label"],
-                    mode=fetch["mode"],
-                    query=fetch["query"],
-                    country=fetch["country"],
-                    category=fetch["category"],
-                    gnews_query=fetch["gnews_query"],
-                    gnews_category=fetch["gnews_category"]
+                    fetch.display_label,
+                    mode=fetch.fetch_mode,
+                    query=fetch.fetch_query,
+                    country=fetch.fetch_country,
+                    category=fetch.fetch_category,
+                    gnews_query=fetch.gnews_query,
+                    gnews_category=fetch.gnews_category
                 )
-                run_metrics["topics"][fetch["label"]] = topic_metrics
+                run_metrics["topics"][fetch.display_label] = topic_metrics
                 for provider_metrics in topic_metrics.get("providers", {}).values():
                     run_metrics["totals"]["input_articles"] += provider_metrics.get("input_articles", 0)
                     run_metrics["totals"]["stored"] += provider_metrics.get("stored", 0)
@@ -775,9 +787,9 @@ def run_all_fetches(run_full_pipeline=True):
                     _merge_counts(run_metrics["totals"]["bias_sources"], provider_metrics.get("bias_sources"))
             except Exception as e:
                 db.session.rollback()
-                logging.error(f"Error fetching {fetch['label']}: {e}")
+                logging.error(f"Error fetching {fetch.display_label}: {e}")
                 run_metrics["status"] = "partial_error"
-                run_metrics["topics"][fetch["label"]] = {
+                run_metrics["topics"][fetch.display_label] = {
                     "status": "error",
                     "reason": str(e),
                 }

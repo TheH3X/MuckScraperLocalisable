@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html data-theme="light">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon_32.png') }}">
+    <link rel="icon" type="image/png" sizes="128x128" href="{{ url_for('static', filename='favicon_128.png') }}">
+    <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='favicon_192.png') }}">
+    <link rel="icon" type="image/png" sizes="512x512" href="{{ url_for('static', filename='favicon_512.png') }}">
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='favicon_180.png') }}">
+    <title>{% if topic.id %}Edit Topic{% else %}New Topic{% endif %} — MuckScraper</title>
+    <style>
+        :root {
+            --accent: #5a5f52;
+            --accent-dark: #464b40;
+            --danger: #9a725b;
+            --bg: #f8f9fa;
+            --surface: #ffffff;
+            --topbar-bg: #1e1e2e;
+            --topbar-text: #cdd6f4;
+            --text: #1a1a1a;
+            --text-muted: #555;
+            --text-faint: #888;
+            --border: #eef0f2;
+            --shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        [data-theme="dark"] {
+            --bg: #0f0f17;
+            --surface: #1a1a26;
+            --text: #e2e8f0;
+            --text-muted: #a0aec0;
+            --text-faint: #718096;
+            --border: #2d2d3f;
+            --shadow: 0 4px 12px rgba(0,0,0,0.25);
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }
+        .topbar {
+            background: var(--topbar-bg);
+            padding: 16px 40px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .topbar-left { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+        .topbar a { color: #89b4fa; text-decoration: none; font-size: 14px; font-weight: 600; }
+        .topbar-title { color: var(--topbar-text); font-size: 18px; font-weight: 800; }
+        .theme-toggle {
+            background: none;
+            border: 1px solid rgba(255,255,255,0.2);
+            color: var(--topbar-text);
+            padding: 6px 14px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .container { max-width: 800px; margin: 48px auto; padding: 0 20px 48px; }
+        .header-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+        h1 { font-size: 32px; font-weight: 800; }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .btn:hover { background: var(--accent-dark); }
+        .btn-secondary { background: transparent; border: 1px solid var(--border); color: var(--text); padding: 10px 18px; }
+        .btn-secondary:hover { background: rgba(0,0,0,0.05); }
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            box-shadow: var(--shadow);
+            padding: 32px;
+            margin-bottom: 24px;
+        }
+        .card-title {
+            font-size: 18px;
+            font-weight: 800;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .form-full { grid-column: 1 / -1; }
+        .field { margin-bottom: 20px; }
+        .field label {
+            display: block;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-faint);
+            margin-bottom: 8px;
+        }
+        .field input[type="text"],
+        .field input[type="number"],
+        .field select,
+        .field textarea {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            background: var(--bg);
+            color: var(--text);
+            font-size: 14px;
+            font-family: inherit;
+        }
+        .field textarea {
+            resize: vertical;
+            min-height: 120px;
+            font-family: monospace;
+            font-size: 13px;
+        }
+        .field input:focus,
+        .field select:focus,
+        .field textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        .help-text {
+            display: block;
+            margin-top: 6px;
+            font-size: 12px;
+            color: var(--text-muted);
+            line-height: 1.4;
+        }
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            text-transform: none !important;
+            color: var(--text) !important;
+        }
+        .actions-row {
+            display: flex;
+            justify-content: flex-end;
+            gap: 16px;
+            margin-top: 32px;
+        }
+        @media (max-width: 760px) {
+            .form-grid { grid-template-columns: 1fr; }
+            .topbar { padding: 16px 18px; }
+            .container { margin: 28px auto; padding: 0 14px 32px; }
+        }
+    </style>
+</head>
+<body>
+<div class="topbar">
+    <div class="topbar-left">
+        <span class="topbar-title">MuckScraper</span>
+        <a href="{{ url_for('admin.topics_list') }}">← Back to Topics</a>
+    </div>
+    <button id="theme-toggle" class="theme-toggle" onclick="toggleTheme()">Dark Mode</button>
+</div>
+
+<div class="container">
+    <div class="header-row">
+        <h1>{% if topic.id %}Edit Topic{% else %}New Topic{% endif %}</h1>
+    </div>
+
+    <form method="POST" action="">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        
+        <div class="card">
+            <div class="card-title">Basic Information</div>
+            <div class="form-grid">
+                <div class="field">
+                    <label for="name">Name (Unique Identifier)</label>
+                    <input type="text" id="name" name="name" value="{{ topic.name if topic.name else '' }}" required placeholder="e.g. SA Politics">
+                    <span class="help-text">Used for internal matching by the Ollama classifier. Must be exact.</span>
+                </div>
+                <div class="field">
+                    <label for="display_label">Display Label</label>
+                    <input type="text" id="display_label" name="display_label" value="{{ topic.display_label if topic.display_label else '' }}" required placeholder="e.g. Politics">
+                    <span class="help-text">Shown to end-users on the website.</span>
+                </div>
+                <div class="field">
+                    <label for="icon">Icon / Emoji</label>
+                    <input type="text" id="icon" name="icon" value="{{ topic.icon if topic.icon else '' }}" placeholder="e.g. 🏛️ or SP">
+                </div>
+                <div class="field">
+                    <label for="display_order">Display Order</label>
+                    <input type="number" id="display_order" name="display_order" value="{{ topic.display_order if topic.display_order else 10 }}" required>
+                </div>
+                <div class="field form-full" style="margin-top: 10px;">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="is_active" {% if not topic.id or topic.is_active %}checked{% endif %}>
+                        Active (visible on site and available to classifier)
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">Fetch Configuration (Optional)</div>
+            <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 20px;">If provided, this topic will be automatically processed during scheduled scraper runs.</p>
+            <div class="form-grid">
+                <div class="field">
+                    <label for="fetch_mode">Fetch Mode</label>
+                    <select id="fetch_mode" name="fetch_mode">
+                        <option value="">-- None (Manual Only) --</option>
+                        <option value="query" {% if topic.fetch_mode == 'query' %}selected{% endif %}>Query</option>
+                        <option value="top" {% if topic.fetch_mode == 'top' %}selected{% endif %}>Top Headlines</option>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="fetch_country">Fetch Country Code</label>
+                    <input type="text" id="fetch_country" name="fetch_country" value="{{ topic.fetch_country if topic.fetch_country else '' }}" placeholder="e.g. za or us">
+                </div>
+                <div class="field">
+                    <label for="fetch_category">NewsAPI Category</label>
+                    <input type="text" id="fetch_category" name="fetch_category" value="{{ topic.fetch_category if topic.fetch_category else '' }}" placeholder="e.g. business, sports">
+                </div>
+                <div class="field">
+                    <label for="fetch_query">NewsAPI Query</label>
+                    <input type="text" id="fetch_query" name="fetch_query" value="{{ topic.fetch_query if topic.fetch_query else '' }}" placeholder="e.g. parliament government">
+                </div>
+                <div class="field">
+                    <label for="gnews_category">GNews Category Override</label>
+                    <input type="text" id="gnews_category" name="gnews_category" value="{{ topic.gnews_category if topic.gnews_category else '' }}" placeholder="Optional">
+                </div>
+                <div class="field">
+                    <label for="gnews_query">GNews Query Override</label>
+                    <input type="text" id="gnews_query" name="gnews_query" value="{{ topic.gnews_query if topic.gnews_query else '' }}" placeholder="Optional">
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">LLM Prompts & Classification</div>
+            
+            <div class="field">
+                <label for="classifier_hint">Classification Hint (Optional)</label>
+                <input type="text" id="classifier_hint" name="classifier_hint" value="{{ topic.classifier_hint if topic.classifier_hint else '' }}" placeholder="e.g. means events, governments, conflicts, or disasters in other countries">
+                <span class="help-text">Added to the prompt when determining if an article belongs to this topic.</span>
+            </div>
+
+            <div class="field">
+                <label for="analysis_persona">Analysis Persona (Optional)</label>
+                <input type="text" id="analysis_persona" name="analysis_persona" value="{{ topic.analysis_persona if topic.analysis_persona else '' }}" placeholder="e.g. political analyst">
+                <span class="help-text">The role the LLM should adopt when summarizing stories in this topic.</span>
+            </div>
+
+            <div class="field">
+                <label for="analysis_keywords_json">Analysis Keywords (JSON Array)</label>
+                <input type="text" id="analysis_keywords_json" name="analysis_keywords_json" value="{{ topic.analysis_keywords_json if topic.analysis_keywords_json else '' }}" placeholder='["keyword1", "keyword2"]'>
+                <span class="help-text">A JSON list of keywords to trigger the deep reporting tools.</span>
+            </div>
+
+            <div class="field">
+                <label for="summary_prompt">Summary Prompt Template</label>
+                <textarea id="summary_prompt" name="summary_prompt" placeholder="Leave blank to use default. Available variables: {persona}, {combined}">{{ topic.summary_prompt if topic.summary_prompt else '' }}</textarea>
+                <span class="help-text">Override the prompt used for short executive summaries. Make sure to include <code>{combined}</code> for the articles.</span>
+            </div>
+
+            <div class="field">
+                <label for="deep_report_prompt">Deep Report Prompt Template</label>
+                <textarea id="deep_report_prompt" name="deep_report_prompt" placeholder="Leave blank to use default. Available variables: {combined}, {source_availability}, {prompt_structure}">{{ topic.deep_report_prompt if topic.deep_report_prompt else '' }}</textarea>
+                <span class="help-text">Override the prompt used for full story analysis. Ensure formatting constraints are maintained.</span>
+            </div>
+        </div>
+
+        <div class="actions-row">
+            <a href="{{ url_for('admin.topics_list') }}" class="btn-secondary" style="text-decoration: none;">Cancel</a>
+            <button type="submit" class="btn">Save Topic</button>
+        </div>
+    </form>
+</div>
+
+<script>
+    function toggleTheme() {
+        const current = document.documentElement.getAttribute('data-theme') || 'light';
+        const next = current === 'light' ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('muckscraper-theme', next);
+        document.getElementById('theme-toggle').textContent = next === 'dark' ? 'Light Mode' : 'Dark Mode';
+    }
+
+    const savedTheme = localStorage.getItem('muckscraper-theme') || 'light';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+    document.getElementById('theme-toggle').textContent = savedTheme === 'dark' ? 'Light Mode' : 'Dark Mode';
+</script>
+</body>
+</html>

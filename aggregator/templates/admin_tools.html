@@ -350,6 +350,23 @@
 
     <div class="section">
         <div class="section-head">
+            <div class="section-title">Settings & Configuration</div>
+            <div class="section-copy">Configure categories, data sources, and how the system interprets the news.</div>
+        </div>
+        <div class="tool-list">
+            <div class="tool-card">
+                <div class="tool-card-title">Manage Topics</div>
+                <p>Add, edit, or disable the main topics. Configure background fetch queries and override LLM prompts for each topic.</p>
+                <div class="meta-row">
+                    <span class="badge">Navigation</span>
+                </div>
+                <a href="{{ url_for('admin.topics_list') }}" class="btn btn-secondary">Open Topic Manager</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="section-head">
             <div class="section-title">Operational</div>
             <div class="section-copy">Short-running actions you might use during normal day-to-day monitoring or when the AI side is offline or behind.</div>
         </div>

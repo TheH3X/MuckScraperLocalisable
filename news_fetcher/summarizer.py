@@ -191,38 +191,73 @@ BUSINESS_ANALYSIS_KEYWORDS = {
 def detect_analysis_type(obj):
     """
     Determine which type of specialized persona to use based on topics.
+    Checks DB topic analysis_keywords_json first, then falls back to
+    hardcoded keyword sets.
     Returns one of: 'politics', 'science', 'sports', 'business', 'default'
     """
     topics = get_topics_list(obj)
     topics_lower = [t.lower() for t in topics]
     text = _analysis_text(obj)
 
-    # A story whose only topic is Politics is high-confidence enough on its
-    # own: don't let rhetorical verbs ("attacks", "slams") in its headlines
-    # fall through to PUBLIC_SAFETY_ANALYSIS_KEYWORDS, and don't require a
-    # POLITICAL_ANALYSIS_KEYWORDS match that policy-speech headlines often lack.
-    politics_topic = _cfg["topics"][0]["label"].lower()
-    if topics_lower == [politics_topic]:
-        return 'politics'
+    # Check DB topics for analysis_persona or analysis_keywords_json overrides
+    if topics:
+        try:
+            import json as _json
+            from aggregator.models import Topic as _Topic
+            for topic_name in topics:
+                db_topic = _Topic.query.filter_by(name=topic_name).first()
+                if not db_topic:
+                    continue
+                if db_topic.analysis_keywords_json:
+                    try:
+                        kws = _json.loads(db_topic.analysis_keywords_json)
+                        if isinstance(kws, list) and any(k.lower() in text for k in kws):
+                            if db_topic.analysis_persona:
+                                # Map persona string to analysis type
+                                p = db_topic.analysis_persona.lower()
+                                if "political" in p:
+                                    return "politics"
+                                if "science" in p or "technology" in p:
+                                    return "science"
+                                if "sports" in p:
+                                    return "sports"
+                                if "financial" in p or "business" in p:
+                                    return "business"
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
+    # Fallback to general categorization if DB lookup failed
     if _contains_any(text, PUBLIC_SAFETY_ANALYSIS_KEYWORDS):
         return 'default'
-    if any(t == politics_topic for t in topics_lower) and _contains_any(text, POLITICAL_ANALYSIS_KEYWORDS):
+    if any("politic" in t or "government" in t for t in topics_lower) or _contains_any(text, POLITICAL_ANALYSIS_KEYWORDS):
         return 'politics'
-    if any(t == 'sci/tech' for t in topics_lower):
+    if any(t in ["sci/tech", "science", "technology", "ai", "medicine", "health"] for t in topics_lower):
         return 'science'
     if any(t == 'sports' for t in topics_lower):
         return 'sports'
     if (
-        any(t == 'buss/fin' for t in topics_lower)
-        and _contains_any(text, BUSINESS_ANALYSIS_KEYWORDS)
+        any(t in ['buss/fin', 'business'] for t in topics_lower)
+        or _contains_any(text, BUSINESS_ANALYSIS_KEYWORDS)
     ):
         return 'business'
     return 'default'
 
 
-def get_persona(analysis_type):
-    """Return the specialized journalist persona for a given analysis type."""
+def get_persona(analysis_type, obj=None):
+    """Return the specialized journalist persona for a given analysis type.
+    If obj has topics with a DB-configured analysis_persona, use that instead.
+    """
+    if obj is not None:
+        try:
+            from aggregator.models import Topic as _Topic
+            for topic_name in get_topics_list(obj):
+                db_topic = _Topic.query.filter_by(name=topic_name).first()
+                if db_topic and db_topic.analysis_persona:
+                    return db_topic.analysis_persona
+        except Exception:
+            pass
     mapping = {
         'politics': 'political analyst',
         'science': 'science and technology journalist',
@@ -252,7 +287,7 @@ def summarize_story(story):
         return None
 
     analysis_type = detect_analysis_type(story)
-    persona = get_persona(analysis_type)
+    persona = get_persona(analysis_type, obj=story)
 
     prompt_articles, excluded_articles = _select_story_prompt_articles(story, limit=10)
     readable_articles = [
@@ -289,7 +324,25 @@ def summarize_story(story):
 
     combined = "\n\n".join(article_texts)
 
-    prompt = f"""You are a {persona} writing an executive summary for a news briefing.
+    # Check if any of the story's topics has a DB-stored summary prompt override
+    db_summary_prompt = None
+    try:
+        from aggregator.models import Topic as _Topic
+        for topic_name in get_topics_list(story):
+            db_topic = _Topic.query.filter_by(name=topic_name).first()
+            if db_topic and db_topic.summary_prompt:
+                db_summary_prompt = db_topic.summary_prompt
+                break
+    except Exception:
+        pass
+
+    if db_summary_prompt:
+        try:
+            prompt = db_summary_prompt.format(combined=combined, persona=persona)
+        except (KeyError, ValueError):
+            prompt = db_summary_prompt  # Use as-is if placeholders are wrong
+    else:
+        prompt = f"""You are a {persona} writing an executive summary for a news briefing.
 
 Below are multiple news articles covering the same story. Write a concise executive summary.
 
@@ -428,9 +481,12 @@ def generate_deep_report(story):
                     lines.append(f"  Excerpt: {snippet}")
         return "\n".join(lines)
 
-    # Build prompt based on analysis type
+    # Build formatting variables based on analysis type
+    combined = ""
+    source_availability = ""
+    prompt_structure = ""
+    
     if analysis_type == 'politics':
-        combined = ""
         availability_lines = []
         prompt_structure_lines = []
         
@@ -453,151 +509,34 @@ def generate_deep_report(story):
 
         source_availability = "\n".join(availability_lines)
         prompt_structure = "\n\n".join(prompt_structure_lines)
-
-        prompt = f"""You are an experienced media analyst writing a detailed report on how different news outlets are covering the same political story.
-
-Below are articles from the current source set, grouped by available outlet bias.
-
-Source availability:
-{source_availability}
-
-{combined}
-
-Write a detailed analytical report using this EXACT format:
-
-The story: [Write 2-3 sentences explaining what happened factually]
-
-{prompt_structure}
-
-What's contested: [Describe where the different sides disagree most sharply, what facts or framings are in dispute]
-
-What's missing: [Identify what angles or perspectives seem absent from the coverage, what questions aren't being asked]
-
-What's next: [Write one sentence on what to watch for]
-
-Rules:
-- Use EXACTLY the labels shown above including the colon
-- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
-- Be specific about framing differences, not just topic differences
-- Do not infer, invent, or speculate about how a missing source bucket would cover the story
-- Stay neutral and analytical in your own voice
-- No markdown, no extra formatting
-- Do not add any text before or after the structure above"""
-
-    elif analysis_type == 'science':
-        all_articles = prompt_articles
-        combined = format_all_articles(all_articles)
-
-        if not combined.strip():
-            return None
-
-        prompt = f"""You are a science journalist writing a detailed report on a scientific or technology development.
-
-Below are articles covering the same story:
-
-{combined}
-
-Write a detailed analytical report using this EXACT format:
-
-The discovery or development: [Write 2-3 sentences explaining what happened or was discovered factually]
-
-Why it matters: [Explain the scientific or technological significance — what does this change or enable?]
-
-What the research shows: [Detail key findings, data points, or technical details from the coverage]
-
-Real world impact: [Explain how this affects people, industries, or society in practical terms]
-
-What experts are saying: [Include notable quotes or expert opinions from the coverage. If none available, say "Expert commentary not available in current coverage."]
-
-What's still unknown: [Note open questions, limitations of the research, or what needs further study]
-
-What's next: [Write one sentence on upcoming developments or what to watch for]
-
-Rules:
-- Use EXACTLY the labels shown above including the colon
-- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
-- Focus on accuracy and significance over drama
-- Stay neutral and factual
-- No markdown, no extra formatting
-- Do not add any text before or after the structure above"""
-
-    elif analysis_type == 'sports':
-        all_articles = prompt_articles
-        combined = format_all_articles(all_articles)
-
-        if not combined.strip():
-            return None
-
-        prompt = f"""You are a sports journalist writing a factual recap and analysis of a sports story.
-
-Below are articles covering the same story:
-
-{combined}
-
-Write a detailed report using this EXACT format:
-
-What happened: [Write 2-3 sentences with the key facts — scores, results, or news]
-
-Key performances: [Describe standout players, teams, or moments from the coverage. If not a game recap, describe the key people involved.]
-
-The bigger picture: [Explain what this means for standings, playoffs, championships, contracts, or the sport more broadly]
-
-By the numbers: [Include key stats, records, or figures mentioned in the coverage. If none available, say "Detailed statistics not available in current coverage."]
-
-What's next: [Write one sentence on upcoming games, decisions, or developments to watch]
-
-Rules:
-- Use EXACTLY the labels shown above including the colon
-- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
-- Focus on facts and context over opinion
-- No markdown, no extra formatting
-- Do not add any text before or after the structure above"""
-
-    elif analysis_type == 'business':
-        all_articles = prompt_articles
-        combined = format_all_articles(all_articles)
-
-        if not combined.strip():
-            return None
-
-        prompt = f"""You are a financial journalist writing a detailed report on a business or markets story.
-
-Below are articles covering the same story:
-
-{combined}
-
-Write a detailed analytical report using this EXACT format:
-
-The story: [Write 2-3 sentences explaining what happened factually]
-
-Market impact: [Describe how markets, stocks, or prices have reacted based on the coverage]
-
-What companies or sectors are affected: [Identify key players, industries, or markets involved and how they are impacted]
-
-What analysts are saying: [Include expert or analyst opinions from the coverage. If none available, say "Analyst commentary not available in current coverage."]
-
-The broader economic picture: [Explain how this fits into wider economic trends, policy, or conditions]
-
-Risks and opportunities: [Identify key risks or opportunities this creates for investors, businesses, or consumers]
-
-What's next: [Write one sentence on key dates, decisions, or developments to watch]
-
-Rules:
-- Use EXACTLY the labels shown above including the colon
-- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
-- Focus on market and economic significance
-- Stay neutral and factual
-- No markdown, no extra formatting
-- Do not add any text before or after the structure above"""
-
     else:
-        # Default — generic deep analysis
-        all_articles = prompt_articles
-        combined = format_all_articles(all_articles)
-
+        combined = format_all_articles(prompt_articles)
         if not combined.strip():
             return None
 
+    # Retrieve DB prompt override if available
+    db_deep_prompt = None
+    try:
+        from aggregator.models import Topic as _Topic
+        for topic_name in get_topics_list(story):
+            db_topic = _Topic.query.filter_by(name=topic_name).first()
+            if db_topic and db_topic.deep_report_prompt:
+                db_deep_prompt = db_topic.deep_report_prompt
+                break
+    except Exception:
+        pass
+
+    if db_deep_prompt:
+        try:
+            prompt = db_deep_prompt.format(
+                combined=combined,
+                source_availability=source_availability,
+                prompt_structure=prompt_structure
+            )
+        except (KeyError, ValueError):
+            prompt = db_deep_prompt
+    else:
+        # Generic fallback
         prompt = f"""You are an experienced journalist writing a detailed report on a news story.
 
 Below are articles covering the same story:
@@ -626,6 +565,28 @@ Rules:
 - Do not use left/right political framing unless the story is explicitly about politics, government, law, elections, or policy
 - No markdown, no extra formatting
 - Do not add any text before or after the structure above"""
+
+    # Check if any of the story's topics has a DB-stored deep report prompt override
+    db_deep_report_prompt = None
+    try:
+        from aggregator.models import Topic as _Topic
+        for topic_name in get_topics_list(story):
+            db_topic = _Topic.query.filter_by(name=topic_name).first()
+            if db_topic and db_topic.deep_report_prompt:
+                db_deep_report_prompt = db_topic.deep_report_prompt
+                break
+    except Exception:
+        pass
+
+    if db_deep_report_prompt:
+        try:
+            prompt = db_deep_report_prompt.format(
+                combined=combined,
+                source_availability=source_availability if analysis_type == 'politics' else '',
+                prompt_structure=prompt_structure if analysis_type == 'politics' else ''
+            )
+        except (KeyError, ValueError):
+            prompt = db_deep_report_prompt  # Use as-is if placeholders are wrong
 
     langfuse_context.update_current_observation(
         input=prompt,

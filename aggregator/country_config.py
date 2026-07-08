@@ -17,9 +17,6 @@ def get_timezone():
     return get_config()["timezone"]
 
 
-def get_topics():
-    return get_config()["topics"]
-
 
 COUNTRY_CONFIGS = {
     "za": {
@@ -32,65 +29,6 @@ COUNTRY_CONFIGS = {
         "newsapi_country": "za",
         "gnews_country": "za",
 
-        # Topic taxonomy
-        "topics": [
-            {"label": "SA Politics", "icon": "SP"},
-            {"label": "SA News", "icon": "SN"},
-            {"label": "International News", "icon": "IN"},
-            {"label": "Sci/Tech", "icon": "ST"},
-            {"label": "Sports", "icon": "SP"},
-            {"label": "Buss/Fin", "icon": "BF"},
-            {"label": "Other", "icon": "OT"},
-        ],
-
-        # Scheduled fetch queries
-        "scheduled_fetches": [
-            {
-                "label":          "SA Politics",
-                "mode":           "query",
-                "country":        None,
-                "category":       None,
-                "query":          "South Africa politics parliament ANC DA EFF government Ramaphosa",
-                "gnews_query":    "South Africa politics parliament government",
-                "gnews_category": None,
-            },
-            {
-                "label":          "Business & Economy",
-                "mode":           "top",
-                "country":        "za",
-                "category":       "business",
-                "query":          None,
-                "gnews_query":    None,
-                "gnews_category": "business",
-            },
-            {
-                "label":          "Science & Health",
-                "mode":           "query",
-                "country":        None,
-                "category":       None,
-                "query":          "South Africa health research science technology",
-                "gnews_query":    "South Africa science health",
-                "gnews_category": "science",
-            },
-            {
-                "label":          "Sports",
-                "mode":           "top",
-                "country":        "za",
-                "category":       "sports",
-                "query":          None,
-                "gnews_query":    None,
-                "gnews_category": "sports",
-            },
-            {
-                "label":          "World News",
-                "mode":           "query",
-                "country":        None,
-                "category":       None,
-                "query":          "international world global news conflicts diplomacy Africa",
-                "gnews_query":    "world global news Africa",
-                "gnews_category": "world",
-            },
-        ],
 
         # RSS feeds
         "rss_feeds": [

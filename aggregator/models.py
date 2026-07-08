@@ -41,8 +41,35 @@ class Topic(db.Model):
     id   = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String, unique=True, nullable=False)
 
+    # Display
+    label         = db.Column(db.String(100), nullable=True)   # Human-readable name shown in sidebar
+    description   = db.Column(db.Text, nullable=True)          # Short description for admin/tooltips
+    icon          = db.Column(db.String(8), nullable=True)     # Sidebar icon code e.g. "SP"
+    display_order = db.Column(db.Integer, default=0, nullable=False, server_default='0')
+    is_active     = db.Column(db.Boolean, default=True, nullable=False, server_default='true')
+
+    # Fetch configuration (replaces scheduled_fetches + FETCH_PRESETS)
+    fetch_mode     = db.Column(db.String(16), nullable=True)   # "query" | "top" | None (no scheduled fetch)
+    fetch_country  = db.Column(db.String(8), nullable=True)
+    fetch_category = db.Column(db.String(32), nullable=True)
+    fetch_query    = db.Column(db.String(512), nullable=True)
+    gnews_query    = db.Column(db.String(512), nullable=True)
+    gnews_category = db.Column(db.String(32), nullable=True)
+
+    # Prompt / persona configuration
+    analysis_persona       = db.Column(db.String(100), nullable=True)  # e.g. "political analyst"
+    analysis_keywords_json = db.Column(db.Text, nullable=True)         # JSON array of keyword triggers
+    classifier_hint        = db.Column(db.Text, nullable=True)         # Extra hint injected into classify prompt
+    summary_prompt         = db.Column(db.Text, nullable=True)         # Override story summary prompt (use {combined}, {persona})
+    deep_report_prompt     = db.Column(db.Text, nullable=True)         # Override deep report prompt (use {combined})
+
     stories  = db.relationship("Story",   secondary=story_topics,  back_populates="topics")
     articles = db.relationship("Article", secondary=article_topics, back_populates="topics")
+
+    @property
+    def display_label(self):
+        """Human-readable label, falling back to the internal name."""
+        return self.label or self.name
 
 
 class Story(db.Model):

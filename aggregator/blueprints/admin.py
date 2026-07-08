@@ -8,7 +8,6 @@ from flask_login import login_required
 from sqlalchemy import case, func, or_
 from aggregator import db
 from aggregator.models import AppSetting, Article, Outlet, Story, Topic, RawArticlePayload
-from aggregator.constants import TOPICS
 from aggregator.search import SearchUnavailableError, reindex_all, search_story_ids
 from aggregator.story_view import apply_aggregator_filter
 
@@ -19,58 +18,21 @@ SEARCH_REINDEX_STATUS_KEY = "search_reindex_status_v1"
 search_reindex_lock = threading.Lock()
 ai_task_lock = threading.Lock()
 SCRAPE_STATUS_FILTERS = ("success", "fallback", "blocked", "failed", "skipped", "pending")
-FETCH_PRESETS = [
-    {
-        "label": "US Politics",
-        "description": "Congress, White House, courts, elections",
-        "mode": "query",
-        "country": "",
-        "category": "",
-        "query": "US politics congress white house senate supreme court",
-        "gnews_query": "US politics congress white house",
-        "gnews_category": "",
-    },
-    {
-        "label": "Business & Economy",
-        "description": "Top business headlines",
-        "mode": "top",
-        "country": "us",
-        "category": "business",
-        "query": "",
-        "gnews_query": "",
-        "gnews_category": "business",
-    },
-    {
-        "label": "Science & Health",
-        "description": "Research, medicine, technology",
-        "mode": "query",
-        "country": "",
-        "category": "",
-        "query": "scientific breakthroughs medical research healthcare tech",
-        "gnews_query": "science health research",
-        "gnews_category": "science",
-    },
-    {
-        "label": "Sports",
-        "description": "Top sports headlines",
-        "mode": "top",
-        "country": "us",
-        "category": "sports",
-        "query": "",
-        "gnews_query": "",
-        "gnews_category": "sports",
-    },
-    {
-        "label": "World News",
-        "description": "International news, conflict, diplomacy",
-        "mode": "query",
-        "country": "",
-        "category": "",
-        "query": "international world global news conflicts diplomacy",
-        "gnews_query": "world global news",
-        "gnews_category": "world",
-    },
-]
+
+
+def _get_active_topics():
+    """Return active Topic rows ordered for sidebar display."""
+    return Topic.query.filter_by(is_active=True).order_by(Topic.display_order).all()
+
+
+def _get_fetch_topics():
+    """Return active Topic rows that have a scheduled fetch configured."""
+    return (
+        Topic.query
+        .filter(Topic.is_active == True, Topic.fetch_mode.isnot(None))
+        .order_by(Topic.display_order)
+        .all()
+    )
 
 
 def _load_json_setting(key):
@@ -342,7 +304,8 @@ def apply_scrape_result(article, result):
 @admin.route("/fetch-page")
 @login_required
 def fetch_page():
-    return render_template("fetch.html", fetch_presets=FETCH_PRESETS)
+    fetch_topics = _get_fetch_topics()
+    return render_template("fetch.html", fetch_presets=fetch_topics)
 
 
 @admin.route("/tools")
@@ -459,7 +422,7 @@ def list_articles(per_page=25, force_multi=False):
     return render_template(
         "articles.html",
         stories=stories,
-        topics=TOPICS,
+        topics=_get_active_topics(),
         active_label=active_label,
         active_scrape_status=active_scrape_status,
         active_search_query=active_search_query,
@@ -1140,3 +1103,144 @@ def vacuum_db():
     except Exception as e:
         logger.error(f"Error running vacuum: {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Topic management CRUD
+# ---------------------------------------------------------------------------
+
+@admin.route("/topics")
+@login_required
+def topics_list():
+    topics = Topic.query.order_by(Topic.display_order, Topic.id).all()
+    return render_template("admin_topics.html", topics=topics)
+
+
+@admin.route("/topics/new", methods=["GET"])
+@login_required
+def topic_new():
+    return render_template("admin_topic_form.html", topic=None)
+
+
+@admin.route("/topics", methods=["POST"])
+@login_required
+def topic_create():
+    name = request.form.get("name", "").strip()
+    if not name:
+        return redirect(url_for("admin.topic_new"))
+
+    existing = Topic.query.filter_by(name=name).first()
+    if existing:
+        # Already exists — redirect to edit
+        return redirect(url_for("admin.topic_edit", topic_id=existing.id))
+
+    try:
+        display_order = int(request.form.get("display_order", 99))
+    except (ValueError, TypeError):
+        display_order = 99
+
+    topic = Topic(
+        name=name,
+        label=request.form.get("label", "").strip() or name,
+        description=request.form.get("description", "").strip() or None,
+        icon=request.form.get("icon", "").strip() or None,
+        display_order=display_order,
+        is_active=request.form.get("is_active") == "on",
+        fetch_mode=request.form.get("fetch_mode", "").strip() or None,
+        fetch_country=request.form.get("fetch_country", "").strip() or None,
+        fetch_category=request.form.get("fetch_category", "").strip() or None,
+        fetch_query=request.form.get("fetch_query", "").strip() or None,
+        gnews_query=request.form.get("gnews_query", "").strip() or None,
+        gnews_category=request.form.get("gnews_category", "").strip() or None,
+        analysis_persona=request.form.get("analysis_persona", "").strip() or None,
+        classifier_hint=request.form.get("classifier_hint", "").strip() or None,
+        summary_prompt=request.form.get("summary_prompt", "").strip() or None,
+        deep_report_prompt=request.form.get("deep_report_prompt", "").strip() or None,
+    )
+    db.session.add(topic)
+    db.session.commit()
+    logger.info("Created topic id=%s name=%r", topic.id, topic.name)
+    return redirect(url_for("admin.topics_list"))
+
+
+@admin.route("/topics/<int:topic_id>/edit", methods=["GET"])
+@login_required
+def topic_edit(topic_id):
+    topic = Topic.query.get_or_404(topic_id)
+    return render_template("admin_topic_form.html", topic=topic)
+
+
+@admin.route("/topics/<int:topic_id>", methods=["POST"])
+@login_required
+def topic_update(topic_id):
+    topic = Topic.query.get_or_404(topic_id)
+
+    new_name = request.form.get("name", "").strip()
+    if new_name and new_name != topic.name:
+        conflict = Topic.query.filter(Topic.name == new_name, Topic.id != topic.id).first()
+        if conflict:
+            logger.warning("Cannot rename topic %s to %r — name already taken by topic %s", topic.id, new_name, conflict.id)
+        else:
+            topic.name = new_name
+
+    try:
+        display_order = int(request.form.get("display_order", topic.display_order))
+    except (ValueError, TypeError):
+        display_order = topic.display_order
+
+    topic.label = request.form.get("label", "").strip() or topic.name
+    topic.description = request.form.get("description", "").strip() or None
+    topic.icon = request.form.get("icon", "").strip() or None
+    topic.display_order = display_order
+    topic.is_active = request.form.get("is_active") == "on"
+    topic.fetch_mode = request.form.get("fetch_mode", "").strip() or None
+    topic.fetch_country = request.form.get("fetch_country", "").strip() or None
+    topic.fetch_category = request.form.get("fetch_category", "").strip() or None
+    topic.fetch_query = request.form.get("fetch_query", "").strip() or None
+    topic.gnews_query = request.form.get("gnews_query", "").strip() or None
+    topic.gnews_category = request.form.get("gnews_category", "").strip() or None
+    topic.analysis_persona = request.form.get("analysis_persona", "").strip() or None
+    topic.classifier_hint = request.form.get("classifier_hint", "").strip() or None
+    topic.summary_prompt = request.form.get("summary_prompt", "").strip() or None
+    topic.deep_report_prompt = request.form.get("deep_report_prompt", "").strip() or None
+
+    db.session.commit()
+    logger.info("Updated topic id=%s name=%r", topic.id, topic.name)
+    return redirect(url_for("admin.topics_list"))
+
+
+@admin.route("/topics/<int:topic_id>/toggle-active", methods=["POST"])
+@login_required
+def topic_toggle_active(topic_id):
+    topic = Topic.query.get_or_404(topic_id)
+    topic.is_active = not topic.is_active
+    db.session.commit()
+    return redirect(url_for("admin.topics_list"))
+
+
+@admin.route("/topics/<int:topic_id>/delete", methods=["POST"])
+@login_required
+def topic_delete(topic_id):
+    topic = Topic.query.get_or_404(topic_id)
+    topic.is_active = False  # Soft-delete: keep history intact
+    db.session.commit()
+    logger.info("Soft-deleted topic id=%s name=%r", topic.id, topic.name)
+    return redirect(url_for("admin.topics_list"))
+
+
+@admin.route("/topics/reseed", methods=["POST"])
+@login_required
+def reseed_topics():
+    import subprocess
+    import sys
+    from flask import flash
+    try:
+        subprocess.run([sys.executable, "seed_topics.py"], check=True, capture_output=True, text=True)
+        flash("Topics successfully reseeded from country configuration.", "success")
+    except subprocess.CalledProcessError as e:
+        logger.error("Failed to reseed topics: %s", e.stderr)
+        flash(f"Error reseeding topics: {e.stderr}", "danger")
+    except Exception as e:
+        logger.error("Failed to reseed topics: %s", e)
+        flash(f"Error reseeding topics: {e}", "danger")
+    return redirect(url_for("admin.topics_list"))
