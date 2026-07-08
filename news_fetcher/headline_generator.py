@@ -1,11 +1,10 @@
 # muckscraperHeadlinesGoogleNEW/news_fetcher/headline_generator.py
 # news_fetcher/headline_generator.py
-
 import logging
 import os
-import requests
 from langfuse import Langfuse
 from langfuse.decorators import observe, langfuse_context
+from news_fetcher.llm_client import generate
 
 logger = logging.getLogger(__name__)
 
@@ -15,11 +14,6 @@ langfuse = Langfuse(
     host=os.environ.get("LANGFUSE_HOST", "http://localhost:3000")
 )
 
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "")
-MODEL       = os.environ.get("OLLAMA_MODEL", "")
-OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", 600))
-
-
 @observe()
 def generate_story_headline(story):
     """
@@ -27,7 +21,7 @@ def generate_story_headline(story):
     Returns a headline string or None if Ollama is unavailable.
     Only runs if the story has 2+ articles.
     """
-    if not OLLAMA_HOST or not MODEL:
+    if os.environ.get("OLLAMA_HOST") == "":
         logger.warning("Ollama not configured, skipping headline generation.")
         return None
 
@@ -56,33 +50,19 @@ Rules:
 - DO NOT prefix the response with "Headline:" or "Here is the headline:". Begin immediately with the headline text."""
 
     langfuse_context.update_current_observation(
-        input=prompt,
-        metadata={"model": MODEL}
+        input=prompt
     )
     try:
-        response = requests.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json={
-                "model": MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "num_predict": 100,
-                    "num_ctx": 2048,
-                }
-            },
-            timeout=OLLAMA_TIMEOUT,
-        )
-        response.raise_for_status()
-
-        headline = response.json().get("response", "").strip()
+        headline = generate(prompt, task="headline", json_mode=False)
+        if not headline:
+            return None
+            
         langfuse_context.update_current_observation(
             output=headline
         )
 
         # Clean up common LLM artifacts
         headline = headline.strip('"\'').strip()
-
         if headline and len(headline.split()) <= 20:
             logger.info(f"Generated headline: '{headline}'")
             return headline
@@ -102,7 +82,7 @@ def generate_missing_headlines():
     """
     from aggregator import db
     from aggregator.models import Story
-    from news_fetcher.summarizer import check_ollama_status
+    from news_fetcher.llm_client import check_ollama_status
 
     if not check_ollama_status():
         logger.info("Ollama offline, skipping headline generation.")

@@ -1,12 +1,10 @@
 # muckscraperHeadlinesGoogleNEW/news_fetcher/outlet_bias_llm.py
 # news_fetcher/outlet_bias_llm.py
-
-import requests
-import json
 import os
 import logging
 from langfuse import Langfuse
 from langfuse.decorators import observe, langfuse_context
+from news_fetcher.llm_client import generate
 
 logger = logging.getLogger(__name__)
 
@@ -15,10 +13,6 @@ langfuse = Langfuse(
     secret_key=os.environ.get("LANGFUSE_SECRET_KEY", ""),
     host=os.environ.get("LANGFUSE_HOST", "http://localhost:3000")
 )
-
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "")
-MODEL = os.environ.get("OLLAMA_MODEL", "")
-OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", 600))
 
 from aggregator.country_config import get_config
 _cfg = get_config()
@@ -31,29 +25,14 @@ BIAS_DESCRIPTIONS = _cfg["bias_descriptions"]
 def _ask_ollama(prompt):
     """Send a prompt to Ollama and return the raw response string or None."""
     langfuse_context.update_current_observation(
-        input=prompt,
-        metadata={"model": MODEL}
+        input=prompt
     )
     try:
-        response = requests.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json={
-                "model": MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "format": "json",
-                "options": {
-                    "num_predict": 100,
-                    "num_ctx": 2048,
-                }
-            },
-            timeout=OLLAMA_TIMEOUT,
-        )
-        response.raise_for_status()
-        result = response.json().get("response", "").strip()
-        langfuse_context.update_current_observation(
-            output=result
-        )
+        result = generate(prompt, task="classification", json_mode=True)
+        if result:
+            langfuse_context.update_current_observation(
+                output=result
+            )
         return result
     except Exception as e:
         logger.info(f"  Error calling Ollama: {e}")

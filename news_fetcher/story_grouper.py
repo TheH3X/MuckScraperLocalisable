@@ -1,7 +1,5 @@
 # muckscraperHeadlinesGoogleNEW/news_fetcher/story_grouper.py
 # news_fetcher/story_grouper.py
-
-import requests
 import os
 import re
 import unicodedata
@@ -10,6 +8,7 @@ import logging
 from dataclasses import dataclass, field
 from langfuse import Langfuse
 from langfuse.decorators import observe, langfuse_context
+from news_fetcher.llm_client import generate
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +20,6 @@ langfuse = Langfuse(
 
 OLLAMA_HOST     = os.environ.get("OLLAMA_HOST", "")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
-OLLAMA_TIMEOUT  = int(os.environ.get("OLLAMA_TIMEOUT", 600))
 
 SIMILARITY_THRESHOLD = 0.92
 LOWER_THRESHOLD = 0.68
@@ -544,28 +542,14 @@ def ask_ollama_for_match(article_title, candidate_stories, article_content=None,
     story_list = "\n".join(story_lines)
     prompt = build_match_prompt(article_title, story_list, article_content=article_content)
 
-    model = os.environ.get("OLLAMA_MODEL", "")
     langfuse_context.update_current_observation(
-        input=prompt,
-        metadata={"model": model}
+        input=prompt
     )
     try:
-        response = requests.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json={
-                "model": model, 
-                "prompt": prompt, 
-                "stream": False, 
-                "format": "json",
-                "options": {
-                    "num_predict": 100,
-                    "num_ctx": 2048,
-                }
-            },
-            timeout=OLLAMA_TIMEOUT,
-        )
-        response.raise_for_status()
-        result = response.json().get("response", "").strip()
+        result = generate(prompt, task="classification", json_mode=True)
+        if not result:
+            return None
+            
         langfuse_context.update_current_observation(output=result)
 
         import json

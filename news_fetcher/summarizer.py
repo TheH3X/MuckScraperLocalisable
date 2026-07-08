@@ -1,12 +1,11 @@
 # muckscraperHeadlinesGoogleNEW/news_fetcher/summarizer.py
 # news_fetcher/summarizer.py
-
-import requests
 import os
 import re
 import logging
 from langfuse import Langfuse
 from langfuse.decorators import observe, langfuse_context
+from news_fetcher.llm_client import generate, check_ollama_status
 
 logger = logging.getLogger(__name__)
 
@@ -16,24 +15,8 @@ langfuse = Langfuse(
     host=os.environ.get("LANGFUSE_HOST", "http://localhost:3000")
 )
 
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "")
-MODEL = os.environ.get("OLLAMA_MODEL", "")
-OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", 600))
-
-if not MODEL:
-    logging.warning("OLLAMA_MODEL environment variable is not set. All summarization will fail.")
-
 from aggregator.country_config import get_config
 _cfg = get_config()
-
-
-def check_ollama_status():
-    """Returns True if Ollama is reachable, False otherwise."""
-    try:
-        response = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=5)
-        return response.status_code == 200
-    except Exception:
-        return False
 
 
 def strip_html(text):
@@ -364,7 +347,6 @@ Executive Summary:"""
     langfuse_context.update_current_observation(
         input=prompt,
         metadata={
-            "model": MODEL,
             "analysis_type": analysis_type,
             "persona": persona,
             "prompt_articles": len(prompt_articles),
@@ -372,23 +354,7 @@ Executive Summary:"""
         }
     )
     try:
-        response = requests.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json={
-                "model": MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "num_predict": 400,
-                    "num_ctx": 4096,
-                }
-            },
-            timeout=OLLAMA_TIMEOUT,
-        )
-        response.raise_for_status()
-
-        result = response.json()
-        summary = result.get("response", "").strip()
+        summary = generate(prompt, task="summary", json_mode=False)
 
         langfuse_context.update_current_observation(
             output=summary
@@ -571,7 +537,6 @@ Rules:
     langfuse_context.update_current_observation(
         input=prompt,
         metadata={
-            "model": MODEL,
             "analysis_type": analysis_type,
             "prompt_articles": len(prompt_articles),
             "excluded_prompt_articles": len(excluded_articles),
@@ -579,22 +544,7 @@ Rules:
     )
 
     try:
-        response = requests.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json={
-                "model": MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "num_predict": 400,
-                    "num_ctx": 4096,
-                }
-            },
-            timeout=OLLAMA_TIMEOUT,
-        )
-        response.raise_for_status()
-        result = response.json()
-        report = result.get("response", "").strip()
+        report = generate(prompt, task="report", json_mode=False)
         langfuse_context.update_current_observation(output=report)
         if report:
             logger.info(f"  Generated {analysis_type} deep report for: {story.title[:60]}...")
@@ -657,26 +607,11 @@ Summary:"""
 
     langfuse_context.update_current_observation(
         input=prompt,
-        metadata={"model": MODEL, "analysis_type": analysis_type, "persona": persona}
+        metadata={"analysis_type": analysis_type, "persona": persona}
     )
 
     try:
-        response = requests.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json={
-                "model": MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "num_predict": 400,
-                    "num_ctx": 4096,
-                }
-            },
-            timeout=OLLAMA_TIMEOUT,
-        )
-        response.raise_for_status()
-        result = response.json()
-        summary = result.get("response", "").strip()
+        summary = generate(prompt, task="summary", json_mode=False)
         langfuse_context.update_current_observation(output=summary)
         if summary:
             logger.info(f"  Generated {analysis_type} summary for article: {article.title[:60]}...")
@@ -787,26 +722,11 @@ Analysis:"""
 
     langfuse_context.update_current_observation(
         input=prompt,
-        metadata={"model": MODEL, "analysis_type": analysis_type, "scope": "article_deep_analysis"}
+        metadata={"analysis_type": analysis_type, "scope": "article_deep_analysis"}
     )
 
     try:
-        response = requests.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json={
-                "model": MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "num_predict": 400,
-                    "num_ctx": 4096,
-                }
-            },
-            timeout=OLLAMA_TIMEOUT,
-        )
-        response.raise_for_status()
-        result = response.json()
-        analysis = result.get("response", "").strip()
+        analysis = generate(prompt, task="report", json_mode=False)
         langfuse_context.update_current_observation(output=analysis)
         if analysis:
             logger.info(f"  Generated {analysis_type} article analysis: {article.title[:60]}...")

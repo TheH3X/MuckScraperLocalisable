@@ -14,6 +14,7 @@ from news_fetcher.rss_fetcher import (
     enrich_skewed_stories_with_left_feeds,
     get_skewed_story_ids_for_left_enrichment,
 )
+from news_fetcher.headline_generator import generate_missing_headlines
 from datetime import datetime, timedelta, timezone
 import logging
 import sys
@@ -820,6 +821,22 @@ def run_all_fetches(run_full_pipeline=True):
                 "status": "error",
                 "reason": str(e),
             }
+        steps_completed.append(step_name)
+
+        # NEW: Generate missing headlines for all multi-article stories created during this run
+        step_name = "Generating missing headlines"
+        if step_name in steps_remaining:
+            steps_remaining.remove(step_name)
+        _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
+        logging.info("--- Generating missing headlines (Batch Pass) ---")
+        try:
+            generate_missing_headlines()
+            run_metrics["steps"]["generate_missing_headlines"] = {"status": "ok"}
+        except Exception as e:
+            db.session.rollback()
+            logging.error(f"Error generating missing headlines: {e}")
+            run_metrics["status"] = "partial_error"
+            run_metrics["steps"]["generate_missing_headlines"] = {"status": "error", "reason": str(e)}
         steps_completed.append(step_name)
 
         if run_full_pipeline:

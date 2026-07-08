@@ -789,11 +789,10 @@ def store_articles(articles_data, topic_name, provider=None):
                 bias_source = "allsides"
                 allsides_bias_score = as_score
             else:
-                logger.info(f"  New outlet {source_name}: no AllSides rating, asking Ollama...")
-                bias_score = get_outlet_bias_from_llm(source_name)
-                bias_source = "ai" if bias_score is not None else None
+                logger.info(f"  New outlet {source_name}: no AllSides rating, will be rated in batch pass...")
+                bias_score = None
+                bias_source = None
                 allsides_bias_score = None
-
             outlet = Outlet(
                 name=source_name,
                 url=url,
@@ -898,17 +897,10 @@ def store_articles(articles_data, topic_name, provider=None):
             if t not in new_article.topics:
                 new_article.topics.append(t)
 
-        # Generate headline if this is a multi-article story (2+ articles)
-        if len(story.articles) >= 2:
-            db.session.flush() # Ensure article is associated for headline generator
-            headline = generate_story_headline(story)
-            if headline:
-                story.headline = headline
-        else:
-            # For single-article stories, ensure story headline is cleared
-            # so the UI falls back to story.title (original article title)
+        # Single-article stories keep headline = None so UI falls back to title.
+        # Multi-article story headlines are now generated in a batch pass by the scheduler.
+        if len(story.articles) < 2:
             story.headline = None
-                
         metrics["stored"] += 1
         metrics["scrape_statuses"][scrape_result.status] = (
             metrics["scrape_statuses"].get(scrape_result.status, 0) + 1

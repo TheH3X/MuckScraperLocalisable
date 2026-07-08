@@ -1,11 +1,10 @@
 # muckscraperHeadlinesGoogleNEW/news_fetcher/topic_classifier.py
 # news_fetcher/topic_classifier.py
-
-import requests
 import os
 import logging
 from langfuse import Langfuse
 from langfuse.decorators import observe, langfuse_context
+from news_fetcher.llm_client import generate
 
 logger = logging.getLogger(__name__)
 
@@ -14,10 +13,6 @@ langfuse = Langfuse(
     secret_key=os.environ.get("LANGFUSE_SECRET_KEY", ""),
     host=os.environ.get("LANGFUSE_HOST", "http://localhost:3000")
 )
-
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "")
-MODEL       = os.environ.get("OLLAMA_MODEL", "")
-OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", 600))
 
 from aggregator.country_config import get_config
 
@@ -81,7 +76,7 @@ def classify_article(title, content_snippet=""):
     valid_topics = get_valid_topics()
     topic_hints = get_topic_hints()
 
-    # Build the topics list, appending any DB-stored hints inline
+    # Build the topics list
     topic_lines = []
     for t in valid_topics:
         if t == "Other":
@@ -93,52 +88,29 @@ def classify_article(title, content_snippet=""):
             topic_lines.append(f"- {t}")
     topics_list = "\n".join(topic_lines)
 
-    prompt = f"""You are a news editor categorizing articles. You must respond with ONLY category names from the list below, one per line. No other text, no notes, no explanations, no parentheses.
+    prompt = f"""Classify this article into categories. Respond with ONLY a JSON object.
 
 Article: "{text}"
 
-Categories (choose only from these exact names):
+Categories:
 {topics_list}
 - Other
 
 Rules:
-- Use EXACT category names only — do not create new categories
-- SA Politics means federal government, parliament, elections, federal policy, or any government action or statement toward another country (diplomacy, sanctions, tariffs, military orders) for {country_name}
-- International News means events, governments, conflicts, or disasters in other countries. If a story is about {country_name} government action toward another country, use BOTH Politics and International News
-- SA News means domestic news in {country_name} that is NOT about government or politics — crime, accidents, disasters, lawsuits, local/state news, transportation, weather
-- Entertainment, celebrity, lifestyle, and human-interest stories belong to Other, not News
-- Sci/Tech means technology, science, research, AI, space — NOT general business news about tech companies (use Buss/Fin for stock/earnings stories)
-- Buss/Fin means financial markets, economics, corporate earnings, mergers — NOT general commerce
-- Sports contracts and player signings belong to Sports only, not Buss/Fin
-- Pick the most specific category — if it's clearly Sports, do not also add other categories
-- Maximum 2 categories per article unless truly necessary
+- Use EXACT category names only
+- Maximum 2 categories
 - If none apply, use "Other"
 
-Respond ONLY with a JSON object in this format:
-{{"categories": ["Category1", "Category2"]}}"""
+{{"categories": ["Category1"]}}"""
 
     langfuse_context.update_current_observation(
-        input=prompt,
-        metadata={"model": MODEL}
+        input=prompt
     )
     try:
-        response = requests.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json={
-                "model":  MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "format": "json",
-                "options": {
-                    "num_predict": 150,
-                    "num_ctx": 2048,
-                }
-            },
-            timeout=OLLAMA_TIMEOUT,
-        )
-        response.raise_for_status()
-
-        result = response.json().get("response", "").strip()
+        result = generate(prompt, task="classification", json_mode=True)
+        if not result:
+            return ["Other"]
+            
         langfuse_context.update_current_observation(
             output=result
         )
