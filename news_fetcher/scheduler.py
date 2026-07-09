@@ -6,7 +6,7 @@ from apscheduler.triggers.cron import CronTrigger
 from aggregator import create_app, db
 from aggregator.article_signals import bias_bucket_for_score
 from aggregator.models import AppSetting
-from news_fetcher.fetch_and_store_articles import fetch_and_store_articles, process_current_edition, review_ambiguous_grouping_matches, sync_allsides_ratings, publish_edition, retry_unrated_outlets, clear_stale_single_article_headlines
+from news_fetcher.fetch_and_store_articles import fetch_and_store_articles, process_current_edition, review_ambiguous_grouping_matches, sync_static_ratings, publish_edition, retry_unrated_outlets, clear_stale_single_article_headlines
 from news_fetcher.rss_fetcher import (
     fetch_and_store_rss,
     enrich_skewed_stories_with_right_feeds,
@@ -352,7 +352,7 @@ def build_headline_site_metrics():
     outlet_ids = set()
     article_bias_counts = {}
     outlet_bias_counts = {}
-    outlet_bias_source_counts = {"allsides": 0, "ai": 0, "unrated": 0}
+    outlet_bias_source_counts = {"static": 0, "ai": 0, "unrated": 0}
     scrape_status_counts = {
         "success": 0,
         "fallback": 0,
@@ -446,9 +446,16 @@ def set_last_fetch_time():
     db.session.commit()
 
 
-def get_last_allsides_sync():
-    """Get the last AllSides sync timestamp from the database."""
-    setting = AppSetting.query.filter_by(key="last_allsides_sync").first()
+def get_last_static_sync():
+    """Get the last static sync timestamp from the database."""
+    setting = AppSetting.query.filter_by(key="last_static_sync").first()
+    if setting and setting.value:
+        try:
+            return datetime.fromisoformat(setting.value)
+        except Exception:
+def get_last_static_sync():
+    """Get the last static sync timestamp from the database."""
+    setting = AppSetting.query.filter_by(key="last_static_sync").first()
     if setting and setting.value:
         try:
             return datetime.fromisoformat(setting.value)
@@ -457,13 +464,13 @@ def get_last_allsides_sync():
     return None
 
 
-def set_last_allsides_sync():
-    """Store the current time as the last AllSides sync timestamp."""
-    setting = AppSetting.query.filter_by(key="last_allsides_sync").first()
+def set_last_static_sync():
+    """Store the current time as the last static sync timestamp."""
+    setting = AppSetting.query.filter_by(key="last_static_sync").first()
     if setting:
         setting.value = datetime.utcnow().isoformat()
     else:
-        setting = AppSetting(key="last_allsides_sync", value=datetime.utcnow().isoformat())
+        setting = AppSetting(key="last_static_sync", value=datetime.utcnow().isoformat())
         db.session.add(setting)
     db.session.commit()
 
@@ -721,7 +728,7 @@ def run_all_fetches(run_full_pipeline=True):
     if run_full_pipeline:
         steps_remaining.extend([
             "Retrying unrated outlets",
-            "Syncing AllSides bias ratings",
+            "Syncing static bias ratings",
             "Headline ranking (Initial)",
             "Targeted Right RSS Enrichment",
             "Headline ranking (Right)",
@@ -870,28 +877,28 @@ def run_all_fetches(run_full_pipeline=True):
                 run_metrics["steps"]["retry_unrated_outlets"] = {"status": "error", "reason": str(e)}
             steps_completed.append(step_name)
 
-            # Run AllSides sync once a month
-            step_name = "Syncing AllSides bias ratings"
+            # Run static sync once a month
+            step_name = "Syncing static bias ratings"
             if step_name in steps_remaining:
                 steps_remaining.remove(step_name)
             _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
 
-            last_sync = get_last_allsides_sync()
+            last_sync = get_last_static_sync()
             if last_sync is None or (datetime.utcnow() - last_sync).days >= 30:
-                logging.info("--- Syncing AllSides bias ratings ---")
+                logging.info("--- Syncing static bias ratings ---")
                 try:
-                    sync_allsides_ratings()
-                    set_last_allsides_sync()
-                    run_metrics["steps"]["allsides_sync"] = {"status": "ok"}
+                    sync_static_ratings()
+                    set_last_static_sync()
+                    run_metrics["steps"]["static_sync"] = {"status": "ok"}
                 except Exception as e:
                     db.session.rollback()
-                    logging.error(f"Error syncing AllSides ratings: {e}")
+                    logging.error(f"Error syncing static ratings: {e}")
                     run_metrics["status"] = "partial_error"
-                    run_metrics["steps"]["allsides_sync"] = {"status": "error", "reason": str(e)}
+                    run_metrics["steps"]["static_sync"] = {"status": "error", "reason": str(e)}
             else:
                 days_since = (datetime.utcnow() - last_sync).days
-                logging.info(f"--- AllSides sync skipped ({days_since}/30 days) ---")
-                run_metrics["steps"]["allsides_sync"] = {
+                logging.info(f"--- static sync skipped ({days_since}/30 days) ---")
+                run_metrics["steps"]["static_sync"] = {
                     "status": "skipped",
                     "days_since_last_sync": days_since,
                 }
@@ -1001,7 +1008,7 @@ def run_all_fetches(run_full_pipeline=True):
             steps_completed.append(step_name)
         else:
             run_metrics["steps"]["retry_unrated_outlets"] = {"status": "skipped", "reason": "fetch_only_run"}
-            run_metrics["steps"]["allsides_sync"] = {"status": "skipped", "reason": "fetch_only_run"}
+            run_metrics["steps"]["static_sync"] = {"status": "skipped", "reason": "fetch_only_run"}
             run_metrics["steps"]["clear_stale_single_article_headlines"] = {"status": "skipped", "reason": "fetch_only_run"}
             run_metrics["steps"]["review_ambiguous_grouping_matches"] = {"status": "skipped", "reason": "fetch_only_run"}
             run_metrics["steps"]["headline_ranking_initial"] = {"status": "skipped", "reason": "fetch_only_run"}

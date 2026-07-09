@@ -384,6 +384,18 @@ def generate_deep_report(story):
 
     analysis_type = detect_analysis_type(story)
 
+    # Resolve bias_mode for story
+    bias_mode = "none"
+    try:
+        if story.topics:
+            modes = [t.bias_mode for t in story.topics if t.bias_mode]
+            if "political" in modes:
+                bias_mode = "political"
+            elif "editorial" in modes:
+                bias_mode = "editorial"
+    except Exception:
+        pass
+
     # Group articles by exact bias category
     bias_groups = {1: [], 2: [], 3: [], 4: [], 5: [], "unrated": []}
 
@@ -409,8 +421,11 @@ def generate_deep_report(story):
 
     for article in prompt_articles:
         score = article.bias_score
-        if score is None and article.outlet:
-            score = article.outlet.bias_score
+        
+        # Note: we deliberately DO NOT fall back to article.outlet.bias_score here.
+        # If article.bias_score is None, it means bias was intentionally suppressed 
+        # (e.g., non-political topic) or it's unrated. Using the outlet score would
+        # falsely inject bias categorization into non-political reports.
             
         if score is None:
             bias_groups["unrated"].append(article)
@@ -450,7 +465,7 @@ def generate_deep_report(story):
     source_availability = ""
     prompt_structure = ""
     
-    if analysis_type == 'politics':
+    if bias_mode == 'political':
         availability_lines = []
         prompt_structure_lines = []
         

@@ -81,7 +81,7 @@ def empty_store_metrics(topic_name, provider=None, input_articles=0):
         "scrape_statuses": {},
         "bias_buckets": {bucket: 0 for bucket in BIAS_BUCKETS},
         "bias_sources": {
-            "allsides": 0,
+            "static": 0,
             "ai": 0,
             "unrated": 0,
         },
@@ -361,7 +361,7 @@ def _first_story_article(story):
 
 def retry_unrated_outlets():
     """Find outlets with no bias score and retry.
-    Checks AllSides lookup table first, then falls back to Ollama.
+    Checks curated lookup table first, then falls back to Ollama.
     Outlets that have failed Ollama 15 or more times are permanently skipped.
     """
     unrated = Outlet.query.filter(
@@ -381,23 +381,23 @@ def retry_unrated_outlets():
     if skipped:
         logger.info(f"Permanently skipping {skipped} outlets that have failed 15+ times.")
 
-    logger.info(f"Found {len(unrated)} unrated outlets, checking AllSides then Ollama...")
+    logger.info(f"Found {len(unrated)} unrated outlets, checking curated then Ollama...")
 
     for outlet in unrated:
-        # Check AllSides lookup table first
+        # Check curated lookup table first
         as_score = get_outlet_bias_score(outlet.name)
         if as_score is not None:
-            logger.info(f"  AllSides rating found for {outlet.name}: {as_score}")
+            logger.info(f"  Curated score {as_score} for {outlet.name}")
             outlet.bias_score = as_score
-            outlet.allsides_bias_score = as_score
-            outlet.bias_source = "allsides"
+            outlet.static_bias_score = as_score
+            outlet.bias_source = "static"
             outlet.bias_retry_count = 0
             for article in outlet.articles:
                 article.bias_score = as_score
             continue
 
         # Fall back to Ollama
-        logger.info(f"  No AllSides rating for {outlet.name}, trying Ollama...")
+        logger.info(f"  No curated rating for {outlet.name}, trying Ollama...")
         bias_score = get_outlet_bias_from_llm(outlet.name)
 
         if bias_score is not None:
@@ -685,8 +685,8 @@ def merge_duplicate_outlets():
             # Copy bias data if canonical is missing it
             if canonical.bias_score is None and dup.bias_score is not None:
                 canonical.bias_score = dup.bias_score
-                canonical.bias_source = dup.bias_source
-                canonical.allsides_bias_score = getattr(dup, 'allsides_bias_score', None)
+                canonical.static_bias_score = getattr(dup, 'static_bias_score', None)
+                canonical.bias_source = getattr(dup, 'bias_source', None)
 
             db.session.delete(dup)
             merged += article_count
@@ -787,21 +787,21 @@ def store_articles(articles_data, topic_name, provider=None, progress_cb=None):
         if not outlet:
             as_score = get_outlet_bias_score(source_name)
             if as_score is not None:
-                logger.info(f"  New outlet {source_name}: AllSides rating {as_score}")
+                logger.info(f"  New outlet {source_name}: Curated rating {as_score}")
                 bias_score = as_score
-                bias_source = "allsides"
-                allsides_bias_score = as_score
+                bias_source = "static"
+                static_bias_score = as_score
             else:
-                logger.info(f"  New outlet {source_name}: no AllSides rating, will be rated in batch pass...")
+                logger.info(f"  New outlet {source_name}: no Curated rating, will be rated in batch pass...")
                 bias_score = None
                 bias_source = None
-                allsides_bias_score = None
+                static_bias_score = None
             outlet = Outlet(
                 name=source_name,
                 url=url,
                 description="N/A",
                 bias_score=bias_score,
-                allsides_bias_score=allsides_bias_score,
+                static_bias_score=static_bias_score,
                 bias_source=bias_source
             )
             db.session.add(outlet)
@@ -866,6 +866,19 @@ def store_articles(articles_data, topic_name, provider=None, progress_cb=None):
             import json
             article_embedding = json.loads(article_embedding)
 
+        # Resolve bias mode based on story topics
+        resolved_bias_mode = "none"
+        if story.topics:
+            modes = [t.bias_mode for t in story.topics if t.bias_mode]
+            if "political" in modes:
+                resolved_bias_mode = "political"
+            elif "editorial" in modes:
+                resolved_bias_mode = "editorial"
+                
+        article_bias_score = outlet.bias_score
+        if resolved_bias_mode == "none":
+            article_bias_score = None
+
         new_article = Article(
             title=title,
             content=final_content,
@@ -875,7 +888,7 @@ def store_articles(articles_data, topic_name, provider=None, progress_cb=None):
             url=url,
             date=published_at,
             fetched_at=datetime.utcnow(),
-            bias_score=outlet.bias_score,
+            bias_score=article_bias_score,
             image_url=image_url,
             embedding=article_embedding,
             scrape_status=scrape_result.status,
@@ -1856,52 +1869,56 @@ def process_current_edition():
     return metrics
 
 
-def sync_allsides_ratings():
+def sync_static_ratings():
     """
-    Sync all outlets against the AllSides lookup table.
-    - Upgrades Ollama-rated outlets to AllSides ratings where a match exists
-    - Updates outlets whose AllSides score has changed since last sync
-    - Propagates any score changes to all articles for that outlet
-    Run monthly via scheduler, or manually via admin menu.
+    Periodic pass to pull static curated bias ratings from configuration (via get_outlet_bias_score)
+    and update the DB. This allows users to add a rating to country_config.py
+    and have it automatically retroactively applied to existing outlets without
+    a full migration script.
     """
+    from aggregator.models import Outlet, Article
+    from aggregator.database import db
     from news_fetcher.outlet_bias_lookup import get_outlet_bias_score
-    from aggregator.models import Outlet
+    import logging
 
-    logger.info("=== AllSides sync starting ===")
-
+    logger = logging.getLogger(__name__)
+    logger.info("=== Curated rating sync starting ===")
+    
     outlets = Outlet.query.all()
     updated = 0
     skipped = 0
 
     for outlet in outlets:
         as_score = get_outlet_bias_score(outlet.name)
-
         if as_score is None:
             skipped += 1
             continue
-
-        score_changed = outlet.allsides_bias_score != as_score
-        not_yet_allsides = outlet.bias_source != "allsides"
-
-        if score_changed or not_yet_allsides:
+            
+        score_changed = outlet.static_bias_score != as_score
+        not_yet_static = outlet.bias_source != "static"
+        
+        if score_changed or not_yet_static:
             old_score = outlet.bias_score
             outlet.bias_score = as_score
-            outlet.allsides_bias_score = as_score
-            outlet.bias_source = "allsides"
+            outlet.static_bias_score = as_score
+            outlet.bias_source = "static"
             outlet.bias_retry_count = 0
-
+            
+            # Retroactively update articles for this outlet.
+            # Only update articles that already have a bias_score — a None score
+            # means the article belongs to a non-political topic (e.g. tech, sports)
+            # and bias was intentionally suppressed. Don't re-introduce it.
             for article in outlet.articles:
-                article.bias_score = as_score
-
-            logger.info(
-                f"  [AllSides Sync] {outlet.name}: "
-                f"{old_score} -> {as_score} "
-                f"({'upgraded from AI' if not_yet_allsides else 'score updated'})"
-            )
+                if article.bias_score is not None:
+                    article.bias_score = as_score
+                    
+            db.session.commit()
             updated += 1
+            logger.info(f"Updated outlet {outlet.name} to curated score {as_score} "
+                f"({'upgraded from AI' if not_yet_static else 'score updated'})")
 
-    db.session.commit()
-    logger.info(f"=== AllSides sync complete. Updated {updated}, no match for {skipped} outlets. ===")
+    logger.info(f"=== Sync complete: {updated} updated, {skipped} skipped ===")
+    return {"status": "ok", "updated": updated, "skipped": skipped}
 
 
 def publish_edition():

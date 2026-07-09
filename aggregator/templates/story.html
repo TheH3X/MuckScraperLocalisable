@@ -338,8 +338,8 @@
 	                <div class="article-item">
 	                    <div class="article-meta">
                         <span>{{ article.outlet.name }}</span>
-                        {% if article.outlet.bias_score %}
-                            {% set b = article.outlet.bias_score | int %}
+                        {% if article.bias_score %}
+                            {% set b = article.bias_score | int %}
                             <span class="bias-tag bias-{{ b }}">
                                 {{ bias_label(b) }}
                             </span>

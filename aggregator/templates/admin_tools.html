@@ -490,15 +490,12 @@
                 </form>
             </div>
             <div class="tool-card">
-                <div class="tool-card-title">Sync AllSides Ratings</div>
-                <p>Refreshes outlet bias from the built-in AllSides mapping and propagates updated outlet scores to related articles.</p>
-                <div class="meta-row">
-                    <span class="badge">Maintenance</span>
-                </div>
-                <form method="POST" action="{{ url_for('admin.sync_allsides') }}">
+                <h3>Sync Curated Ratings</h3>
+                <p>Refreshes outlet bias from the built-in curated mapping and propagates updated outlet scores to related articles.</p>
+                <form method="POST" action="{{ url_for('admin.sync_static') }}">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="next" value="{{ url_for('admin.tools_page') }}">
-                    <button type="submit" class="btn">Sync AllSides Ratings</button>
+                    <button type="submit" class="btn">Sync Ratings</button>
                 </form>
             </div>
         </div>

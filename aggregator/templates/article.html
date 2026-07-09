@@ -378,10 +378,8 @@
                 <span class="article-date">Updated: <span class="local-date" data-utc="{{ article.last_updated.isoformat() }}Z">{{ article.last_updated.strftime('%B %d, %Y %H:%M') }}</span></span>
             {% endif %}
 
-            {% if article.outlet.bias_score %}
-                <span class="bias-tag bias-{{ article.outlet.bias_score | int }}">{{ bias_label(article.outlet.bias_score) }}</span>
-            {% else %}
-                <span class="bias-tag bias-none">Unrated</span>
+            {% if article.bias_score %}
+                <span class="bias-tag bias-{{ article.bias_score | int }}">{{ bias_label(article.bias_score) }}</span>
             {% endif %}
         </div>
 

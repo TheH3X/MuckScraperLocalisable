@@ -165,11 +165,16 @@ def fetch_and_store_rss(progress_cb=None):
 
 
 def _story_bias_counts(story):
+    """Count articles by bias bucket using article.bias_score exclusively.
+
+    A None article bias_score means bias was intentionally suppressed for that
+    article's topic — do NOT fall back to outlet.bias_score.
+    """
     counts = Counter()
     for article in story.articles:
         score = article.bias_score
-        if score is None and article.outlet:
-            score = article.outlet.bias_score
+        if score is None:
+            continue  # Suppressed — omit from counts rather than use outlet score
         counts[bias_bucket_for_score(score)] += 1
     return counts
 
@@ -198,6 +203,11 @@ def _story_keyword_tokens(story, max_tokens=8):
 def _story_needs_right_enrichment(story):
     if len(story.articles) < 2:
         return False
+        
+    if story.topics:
+        modes = [t.bias_mode for t in story.topics if t.bias_mode]
+        if "political" not in modes:
+            return False
 
     counts = _story_bias_counts(story)
     if counts["lean_right"] or counts["right"]:
@@ -217,6 +227,11 @@ def _story_needs_right_enrichment(story):
 def _story_needs_left_enrichment(story):
     if len(story.articles) < 2:
         return False
+        
+    if story.topics:
+        modes = [t.bias_mode for t in story.topics if t.bias_mode]
+        if "political" not in modes:
+            return False
 
     counts = _story_bias_counts(story)
     if counts["left"] or counts["lean_left"]:
@@ -524,6 +539,30 @@ def enrich_skewed_stories_with_left_feeds(
 
 
 def enrich_story_with_opposite_feeds(story, max_articles_per_story=3, lookback_hours=72):
+    if story.topics:
+        modes = [t.bias_mode for t in story.topics if t.bias_mode]
+        if "political" not in modes:
+            return {
+                "provider": "rss_enrichment_manual",
+                "status": "skipped_not_political",
+                "direction": "none",
+                "stories_considered": 1,
+                "stories_targeted": [],
+                "feeds_attempted": 0,
+                "feeds_with_articles": 0,
+                "feed_articles_scanned": 0,
+                "input_articles": 0,
+                "matched_articles": 0,
+                "stored": 0,
+                "new_outlets": 0,
+                "stories_touched": 0,
+                "skipped": {},
+                "scrape_statuses": {},
+                "bias_buckets": {},
+                "bias_sources": {},
+                "per_feed": [],
+            }
+
     counts = _story_bias_counts(story)
     leftish_total = counts["left"] + counts["lean_left"]
     rightish_total = counts["right"] + counts["lean_right"]

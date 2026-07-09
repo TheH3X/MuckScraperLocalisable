@@ -6,8 +6,8 @@
       {% if outlet.bias_score is not none %}
         {% set b_class = bias_color_class(outlet.bias_score) %}
         <span class="bias-label-box {{ b_class }}">{{ bias_label(outlet.bias_score) }}</span>
-        {% if outlet.bias_source == 'allsides' %}
-          <span class="source-badge" title="AllSides rating">AS</span>
+        {% if outlet.bias_source == 'static' %}
+          <span class="source-badge" title="Curated rating">📋</span>
         {% else %}
           <span class="source-badge" title="AI generated rating">AI</span>
         {% endif %}

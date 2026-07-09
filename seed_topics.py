@@ -504,6 +504,9 @@ def run():
 
     with app.app_context():
         print("=== seed_topics.py ===")
+        cfg = get_config()
+        bias_modes = cfg.get("bias_modes", {})
+        default_bias = cfg.get("default_bias_mode", "none")
 
         # --- Step 1: Upsert canonical topics from country_config display list ---
         for order, topic_def in enumerate(display_topics):
@@ -543,6 +546,7 @@ def run():
                     existing.fetch_query = fetch.get("query")
                     existing.gnews_query = fetch.get("gnews_query")
                     existing.gnews_category = fetch.get("gnews_category")
+                existing.bias_mode = bias_modes.get(canonical_name, default_bias)
                 # Only set prompts if not already customised
                 if not existing.analysis_persona:
                     existing.analysis_persona = preset["analysis_persona"]
@@ -565,6 +569,7 @@ def run():
                     fetch_query=fetch.get("query") if fetch else None,
                     gnews_query=fetch.get("gnews_query") if fetch else None,
                     gnews_category=fetch.get("gnews_category") if fetch else None,
+                    bias_mode=bias_modes.get(canonical_name, default_bias),
                     analysis_persona=preset["analysis_persona"],
                     summary_prompt=preset["summary_prompt"],
                     deep_report_prompt=preset["deep_report_prompt"],
@@ -605,6 +610,8 @@ def run():
                 canonical.fetch_query = fetch.get("query")
                 canonical.gnews_query = fetch.get("gnews_query")
                 canonical.gnews_category = fetch.get("gnews_category")
+                
+            canonical.bias_mode = bias_modes.get(canonical.name, default_bias)
 
             stale = Topic.query.filter_by(name=fetch_label).first()
             if not stale:

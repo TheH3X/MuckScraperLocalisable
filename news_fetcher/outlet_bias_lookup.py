@@ -1,5 +1,5 @@
-# news_fetcher/allsides_lookup.py
-# AllSides Media Bias Ratings mapped to MuckScraper's 1-5 scale.
+# news_fetcher/outlet_bias_lookup.py
+# Curated Media Bias Ratings mapped to MuckScraper's 1-5 scale.
 # 1=Left, 2=Lean Left, 3=Center, 4=Lean Right, 5=Right
 # Source: allsides.com/media-bias/media-bias-ratings
 # Last updated: April 2026

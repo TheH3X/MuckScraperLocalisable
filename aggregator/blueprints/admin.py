@@ -249,6 +249,12 @@ def article_domain(url):
 
 
 def story_bias_totals(story):
+    """Compute left/center/right article counts for a story.
+
+    Uses article.bias_score exclusively. A None value means the article belongs
+    to a non-political topic and bias was intentionally suppressed — do NOT fall
+    back to outlet.bias_score, as that would re-introduce bias for tech/sports/etc.
+    """
     counts = {
         "left": 0,
         "center": 0,
@@ -256,10 +262,8 @@ def story_bias_totals(story):
     }
     for article in story.articles:
         score = article.bias_score
-        if score is None and article.outlet:
-            score = article.outlet.bias_score
         if score is None:
-            continue
+            continue  # Intentionally suppressed — do not fall back to outlet score
         if score <= 2.5:
             counts["left"] += 1
         elif score <= 3.5:
@@ -546,7 +550,11 @@ def rerank_outlet(outlet_id):
         if bias_score is not None:
             outlet.bias_score = bias_score
             for article in outlet.articles:
-                article.bias_score = bias_score
+                # Only update articles that already have a bias_score.
+                # A None score means bias was intentionally suppressed for that
+                # article's topic (e.g. tech, sports) — don't re-introduce it.
+                if article.bias_score is not None:
+                    article.bias_score = bias_score
             db.session.commit()
     except Exception as e:
         logger.error(f"Re-rank error: {e}")
@@ -930,13 +938,13 @@ def unblock_domain():
     return redirect(url_for("admin.scrape_blocklist"))
 
 
-@admin.route("/sync-allsides", methods=["POST"])
+@admin.route("/sync-static", methods=["POST"])
 @login_required
-def sync_allsides():
+def sync_static():
     label = request.form.get("label", "")
     scrape_status = request.form.get("scrape_status", "").strip() or None
-    from news_fetcher.fetch_and_store_articles import sync_allsides_ratings
-    dispatch_background_tool("Sync AllSides Ratings", ["Applying AllSides bias to outlets and articles"], sync_allsides_ratings)
+    from news_fetcher.fetch_and_store_articles import sync_static_ratings
+    dispatch_background_tool("Sync Curated Ratings", ["Applying curated bias to outlets and articles"], sync_static_ratings)
     return redirect_to_articles(label, scrape_status)
 
 

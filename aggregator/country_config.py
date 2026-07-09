@@ -151,5 +151,21 @@ COUNTRY_CONFIGS = {
             4: "Prioritizes economic growth, free-market solutions, and corporate interests. Highly critical of state inefficiencies, high taxes, and labor union strikes",
             5: "Emphasizes traditionalism, cultural preservation, ethno-nationalism, or strict libertarianism. Often focuses on agricultural security or specific community interests",
         },
+        
+        # Bias display modes per topic
+        "bias_modes": {
+            "SA Politics": "political",
+            "SA News": "political",
+            "International News": "none",
+            "Business": "political",
+            "Technology": "none",
+            "AI": "none",
+            "Gaming": "none",
+            "Science": "none",
+            "Medicine": "none",
+            "Sports": "none",
+            "Other": "none",
+        },
+        "default_bias_mode": "none",
     },
 }

@@ -29,7 +29,7 @@ class Outlet(db.Model):
     description = db.Column(db.Text)
     bias_score  = db.Column(db.Float)
     bias_retry_count = db.Column(db.Integer, default=0, nullable=False, server_default='0')
-    allsides_bias_score = db.Column(db.Float, nullable=True)
+    static_bias_score = db.Column(db.Float, nullable=True)
     bias_source = db.Column(db.String(16), nullable=True)
 
     articles = db.relationship("Article", backref="outlet", lazy=True)
@@ -55,6 +55,7 @@ class Topic(db.Model):
     fetch_query    = db.Column(db.String(512), nullable=True)
     gnews_query    = db.Column(db.String(512), nullable=True)
     gnews_category = db.Column(db.String(32), nullable=True)
+    bias_mode      = db.Column(db.String(16), nullable=True)   # "political" | "editorial" | "none" | None
 
     # Prompt / persona configuration
     analysis_persona       = db.Column(db.String(100), nullable=True)  # e.g. "political analyst"

@@ -846,11 +846,11 @@
 
                                 {% set counts = namespace(b1=0, b2=0, b3=0, b4=0, b5=0) %}
                                 {% for art in story.articles %}
-                                    {% if art.outlet.bias_score == 1 %}{% set counts.b1 = counts.b1 + 1 %}
-                                    {% elif art.outlet.bias_score == 2 %}{% set counts.b2 = counts.b2 + 1 %}
-                                    {% elif art.outlet.bias_score == 3 %}{% set counts.b3 = counts.b3 + 1 %}
-                                    {% elif art.outlet.bias_score == 4 %}{% set counts.b4 = counts.b4 + 1 %}
-                                    {% elif art.outlet.bias_score == 5 %}{% set counts.b5 = counts.b5 + 1 %}
+                                    {% if art.bias_score == 1 %}{% set counts.b1 = counts.b1 + 1 %}
+                                    {% elif art.bias_score == 2 %}{% set counts.b2 = counts.b2 + 1 %}
+                                    {% elif art.bias_score == 3 %}{% set counts.b3 = counts.b3 + 1 %}
+                                    {% elif art.bias_score == 4 %}{% set counts.b4 = counts.b4 + 1 %}
+                                    {% elif art.bias_score == 5 %}{% set counts.b5 = counts.b5 + 1 %}
                                     {% endif %}
                                 {% endfor %}
 
@@ -909,21 +909,14 @@
                                     <a class="full-text-link" href="{{ url_for('public.view_article', article_id=article.id) }}">Full Summary & Text →</a>
 
                                     <div style="flex-basis: 100%; display: flex; align-items: center; gap: 8px; margin-top: 4px;">
-                                        {% if article.outlet.bias_score %}
-                                            <span class="bias-tag bias-{{ article.outlet.bias_score | int }}">{{ bias_label(article.outlet.bias_score) }}</span>
-                                        {% else %}
-                                            <span class="bias-tag bias-none">Unrated</span>
+                                        {% if article.bias_score %}
+                                            <span class="bias-tag bias-{{ article.bias_score | int }}">{{ bias_label(article.bias_score) }}</span>
                                         {% endif %}
 
-                                        {% if article.outlet.bias_source == "allsides" %}
-                                            <span class="source-badge as-badge" title="Rated by AllSides">AS</span>
+                                        {% if article.outlet.bias_source == "static" %}
+                                            <span class="source-badge" title="Curated rating">📋</span>
                                         {% elif article.outlet.bias_source == "ai" %}
                                             <span class="source-badge ai-badge" title="Rated by AI">AI</span>
-                                        {% endif %}
-
-                                        {% if article.bias_score and article.bias_score != article.outlet.bias_score %}
-                                            <span style="color:var(--text-faint); font-size:10px;">•</span>
-                                            <span class="bias-tag bias-{{ article.bias_score | int }}">Article: {{ bias_label(article.bias_score) }}</span>
                                         {% endif %}
 
                                         <span class="article-actions">
