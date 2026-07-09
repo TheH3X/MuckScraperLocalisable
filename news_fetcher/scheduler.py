@@ -682,7 +682,7 @@ def _notify_fetch_report(report_payload):
         logging.warning(f"  [n8n] Fetch report webhook failed ({e}) — continuing normally")
 
 
-def _broadcast_step(status, current_step, started_at, steps_completed, steps_remaining, ollama_up):
+def _broadcast_step(status, current_step, started_at, steps_completed, steps_remaining, ollama_up, article_progress=None):
     payload = {
         "status": status,
         "current_step": current_step,
@@ -690,6 +690,7 @@ def _broadcast_step(status, current_step, started_at, steps_completed, steps_rem
         "steps_completed": steps_completed,
         "steps_remaining": steps_remaining,
         "ollama_up": ollama_up,
+        "article_progress": article_progress,
     }
     _save_json_setting("pipeline_live_status", payload)
 
@@ -703,6 +704,7 @@ def _clear_pipeline_status(status="idle", finished_at=None):
         "steps_completed": [],
         "steps_remaining": [],
         "ollama_up": None,
+        "article_progress": None,
     }
     _save_json_setting("pipeline_live_status", payload)
 
@@ -765,6 +767,12 @@ def run_all_fetches(run_full_pipeline=True):
                 steps_remaining.remove(step_name)
 
             _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
+            def create_progress_cb(s_name, s_comp, s_rem):
+                def cb(current, total):
+                    _broadcast_step("running", s_name, run_started_at, s_comp, s_rem, ollama_state.get("up_at_start"), article_progress={"current": current, "total": total})
+                return cb
+
+            progress_cb = create_progress_cb(step_name, list(steps_completed), list(steps_remaining))
             logging.info(f"--- {step_name} ---")
             try:
                 topic_metrics = fetch_and_store_articles(
@@ -774,7 +782,8 @@ def run_all_fetches(run_full_pipeline=True):
                     country=fetch.fetch_country,
                     category=fetch.fetch_category,
                     gnews_query=fetch.gnews_query,
-                    gnews_category=fetch.gnews_category
+                    gnews_category=fetch.gnews_category,
+                    progress_cb=progress_cb
                 )
                 run_metrics["topics"][fetch.display_label] = topic_metrics
                 for provider_metrics in topic_metrics.get("providers", {}).values():
@@ -801,9 +810,12 @@ def run_all_fetches(run_full_pipeline=True):
         if step_name in steps_remaining:
             steps_remaining.remove(step_name)
         _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
+        def rss_progress_cb(current, total):
+            _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"), article_progress={"current": current, "total": total})
+
         logging.info("--- Fetching RSS feeds ---")
         try:
-            rss_metrics = fetch_and_store_rss()
+            rss_metrics = fetch_and_store_rss(progress_cb=rss_progress_cb)
             run_metrics["rss"] = rss_metrics
             run_metrics["totals"]["input_articles"] += rss_metrics.get("input_articles", 0)
             run_metrics["totals"]["stored"] += rss_metrics.get("stored", 0)

@@ -93,7 +93,7 @@ def fetch_feed(feed_url):
         return None, []
 
 
-def fetch_and_store_rss():
+def fetch_and_store_rss(progress_cb=None):
     """
     Fetch all RSS feeds and store articles via the normal ingestion pipeline.
     Each article goes through the same dedup, scraping, embedding, topic
@@ -103,7 +103,6 @@ def fetch_and_store_rss():
     from news_fetcher.fetch_and_store_articles import store_articles
 
     logger.info("=== RSS fetch starting ===")
-    total = 0
     metrics = {
         "provider": "rss",
         "status": "ok",
@@ -120,10 +119,24 @@ def fetch_and_store_rss():
         "per_feed": [],
     }
 
+    all_articles_by_feed = []
+    total_articles = 0
     for feed_url in RSS_FEEDS:
         source_name, articles = fetch_feed(feed_url)
+        all_articles_by_feed.append((feed_url, source_name, articles))
+        total_articles += len(articles)
+
+    articles_processed = 0
+    for feed_url, source_name, articles in all_articles_by_feed:
         if articles:
-            feed_metrics = store_articles(articles, "Global News", provider="rss")
+            def make_cb(base_count, total_count):
+                def cb(current, _total):
+                    if progress_cb:
+                        progress_cb(base_count + current, total_count)
+                return cb
+                
+            feed_metrics = store_articles(articles, "Global News", provider="rss", progress_cb=make_cb(articles_processed, total_articles))
+            articles_processed += len(articles)
             metrics["feeds_with_articles"] += 1
             metrics["input_articles"] += feed_metrics.get("input_articles", 0)
             metrics["stored"] += feed_metrics.get("stored", 0)
@@ -139,7 +152,6 @@ def fetch_and_store_rss():
                 "input_articles": feed_metrics.get("input_articles", 0),
                 "stored": feed_metrics.get("stored", 0),
             })
-            total += len(articles)
         else:
             metrics["per_feed"].append({
                 "feed_url": feed_url,
@@ -148,7 +160,7 @@ def fetch_and_store_rss():
                 "stored": 0,
             })
 
-    logger.info(f"=== RSS fetch complete. Processed {total} articles. ===")
+    logger.info(f"=== RSS fetch complete. Processed {total_articles} articles. ===")
     return metrics
 
 

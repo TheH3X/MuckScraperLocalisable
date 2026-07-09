@@ -182,6 +182,28 @@
                     <span class="status-pill idle" id="pipeline-status-pill">Idle</span>
                     <span style="font-size: 13px; font-weight: 600;" id="pipeline-current-step">Waiting for next run</span>
                 </div>
+                
+                <!-- Overall Progress Bar -->
+                <div id="pipeline-overall-container" style="display: none; margin-top: 10px;">
+                    <div style="display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; color: var(--text-muted); margin-bottom: 3px;">
+                        <span>Overall Pipeline</span>
+                        <span id="pipeline-overall-text"></span>
+                    </div>
+                    <div style="height: 6px; width: 100%; background: var(--border); border-radius: 4px; overflow: hidden;">
+                        <div id="pipeline-overall-bar" style="height: 100%; width: 0%; background: var(--broad); transition: width 0.3s ease;"></div>
+                    </div>
+                </div>
+
+                <!-- Current Step Progress Bar -->
+                <div id="pipeline-step-container" style="display: none; margin-top: 8px;">
+                    <div style="display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; color: var(--text-muted); margin-bottom: 3px;">
+                        <span>Current Step</span>
+                        <span id="pipeline-step-text" style="color: var(--accent);"></span>
+                    </div>
+                    <div style="height: 6px; width: 100%; background: var(--border); border-radius: 4px; overflow: hidden;">
+                        <div id="pipeline-step-bar" style="height: 100%; width: 0%; background: var(--accent); transition: width 0.3s ease;"></div>
+                    </div>
+                </div>
                 <div class="status-meta">
                     <span id="pipeline-time-elapsed"></span><br>
                     <span id="pipeline-last-run">Loading...</span>
@@ -349,6 +371,34 @@
                     <strong>Stories touched:</strong> ${summary.stories_touched || 0}<br>
                     <strong>Readable:</strong> ${summary.headline_readable || 0} articles
                 `;
+                
+                // Calculate Progress %
+                // Calculate Progress %
+                let completedCount = (live.steps_completed || []).length;
+                let remainingCount = (live.steps_remaining || []).length;
+                let totalCount = completedCount + remainingCount + (pStatus === 'running' ? 1 : 0);
+                
+                let overallContainer = document.getElementById('pipeline-overall-container');
+                let stepContainer = document.getElementById('pipeline-step-container');
+                
+                if (pStatus === 'running' || pStatus === 'finished') {
+                    overallContainer.style.display = 'block';
+                    let overallPercent = (pStatus === 'finished') ? 100 : (totalCount > 0 ? Math.floor((completedCount / totalCount) * 100) : 0);
+                    document.getElementById('pipeline-overall-bar').style.width = overallPercent + '%';
+                    document.getElementById('pipeline-overall-text').textContent = overallPercent + '% (' + completedCount + '/' + totalCount + ' steps)';
+                    
+                    if (pStatus === 'running' && live.article_progress && live.article_progress.total > 0) {
+                        stepContainer.style.display = 'block';
+                        let stepPercent = Math.floor((live.article_progress.current / live.article_progress.total) * 100);
+                        document.getElementById('pipeline-step-bar').style.width = stepPercent + '%';
+                        document.getElementById('pipeline-step-text').textContent = stepPercent + '% (' + live.article_progress.current + '/' + live.article_progress.total + ' items)';
+                    } else {
+                        stepContainer.style.display = 'none';
+                    }
+                } else {
+                    overallContainer.style.display = 'none';
+                    stepContainer.style.display = 'none';
+                }
                 
                 // Update Steps List
                 let stepsHtml = '';

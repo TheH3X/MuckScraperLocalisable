@@ -703,7 +703,7 @@ def merge_duplicate_outlets():
     return summary
 
 
-def store_articles(articles_data, topic_name, provider=None):
+def store_articles(articles_data, topic_name, provider=None, progress_cb=None):
     """
     Store a list of normalized article dicts into the database,
     tagging them with the given topic.
@@ -729,7 +729,10 @@ def store_articles(articles_data, topic_name, provider=None):
         GROUPING_LOOKBACK_DAYS,
     )
 
-    for article in articles_data:
+    for idx, article in enumerate(articles_data, 1):
+        if progress_cb:
+            progress_cb(idx, len(articles_data))
+            
         title        = article.get("title")
         content      = article.get("content") or ""
         raw_url      = article.get("url")
@@ -1011,7 +1014,7 @@ def review_ambiguous_grouping_matches(review_hours=24, max_articles=75):
     return {"status": "ok", "reviewed": reviewed, "reassigned": reassigned}
 
 
-def fetch_newsapi(topic_name, mode="top", query=None, country=None, category=None):
+def fetch_newsapi(topic_name, mode="top", query=None, country=None, category=None, progress_cb=None):
     """Fetch articles from NewsAPI and store them."""
     if country is None:
         country = _cfg["newsapi_country"]
@@ -1079,7 +1082,7 @@ def fetch_newsapi(topic_name, mode="top", query=None, country=None, category=Non
                 "image_url":    a.get("urlToImage"),
             })
 
-        metrics = store_articles(normalized, topic_name, provider="newsapi")
+        metrics = store_articles(normalized, topic_name, provider="newsapi", progress_cb=progress_cb)
 
         # Store raw payload
         from aggregator.models import RawArticlePayload
@@ -1106,7 +1109,7 @@ def fetch_newsapi(topic_name, mode="top", query=None, country=None, category=Non
         }
 
 
-def fetch_gnews(topic_name, query=None, category=None):
+def fetch_gnews(topic_name, query=None, category=None, progress_cb=None):
     """Fetch articles from GNews API and store them."""
     api_key = os.environ.get("GNEWS_API_KEY", "")
     if not api_key:
@@ -1177,7 +1180,7 @@ def fetch_gnews(topic_name, query=None, category=None):
                 "image_url":    a.get("image"),
             })
 
-        metrics = store_articles(normalized, topic_name, provider="gnews")
+        metrics = store_articles(normalized, topic_name, provider="gnews", progress_cb=progress_cb)
 
         # Store raw payload
         from aggregator.models import RawArticlePayload
@@ -1679,15 +1682,25 @@ def cleanup_old_payloads():
 
 def fetch_and_store_articles(topic_name, mode="top", query=None,
                               country=None, category=None,
-                              gnews_query=None, gnews_category=None):
+                              gnews_query=None, gnews_category=None,
+                              progress_cb=None):
     """
     Main entry point. Fetches from both NewsAPI and GNews for a given topic.
     """
     if country is None:
         country = _cfg["newsapi_country"]
+        
+    def newsapi_cb(current, total):
+        if progress_cb:
+            progress_cb(current, total * 2 if total > 0 else 1)
+            
+    def gnews_cb(current, total):
+        if progress_cb:
+            progress_cb(total + current, total * 2 if total > 0 else 1)
+
     newsapi_metrics = fetch_newsapi(topic_name, mode=mode, query=query,
-                                    country=country, category=category)
-    gnews_metrics = fetch_gnews(topic_name, query=gnews_query, category=gnews_category)
+                                    country=country, category=category, progress_cb=newsapi_cb)
+    gnews_metrics = fetch_gnews(topic_name, query=gnews_query, category=gnews_category, progress_cb=gnews_cb)
     cleanup_old_payloads()
     return {
         "topic_name": topic_name,
