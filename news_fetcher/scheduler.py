@@ -453,13 +453,6 @@ def get_last_static_sync():
         try:
             return datetime.fromisoformat(setting.value)
         except Exception:
-def get_last_static_sync():
-    """Get the last static sync timestamp from the database."""
-    setting = AppSetting.query.filter_by(key="last_static_sync").first()
-    if setting and setting.value:
-        try:
-            return datetime.fromisoformat(setting.value)
-        except Exception:
             return None
     return None
 
