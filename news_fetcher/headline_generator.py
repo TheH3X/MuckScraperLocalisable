@@ -45,21 +45,29 @@ Rules:
 - Maximum 15 words
 - Present tense, active voice
 - No punctuation at the end
-- DO NOT wrap the headline in quotes
 - Do not include source names or outlet names
-- DO NOT prefix the response with "Headline:" or "Here is the headline:". Begin immediately with the headline text."""
+
+Return the result as a JSON object with a single key "headline" containing the text."""
 
     langfuse_context.update_current_observation(
         input=prompt
     )
     try:
-        headline = generate(prompt, task="headline", json_mode=False)
-        if not headline:
+        import json
+        headline_response = generate(prompt, task="headline", json_mode=True)
+        if not headline_response:
             return None
             
         langfuse_context.update_current_observation(
-            output=headline
+            output=headline_response
         )
+
+        try:
+            parsed = json.loads(headline_response)
+            headline = parsed.get("headline", "")
+        except json.JSONDecodeError:
+            logger.warning(f"Failed to parse headline JSON: '{headline_response}'")
+            return None
 
         # Clean up common LLM artifacts
         headline = headline.strip('"\'').strip()

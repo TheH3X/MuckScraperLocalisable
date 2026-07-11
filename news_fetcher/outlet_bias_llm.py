@@ -74,10 +74,7 @@ def get_outlet_bias_from_llm(outlet_name):
 Rules:
 - If you have never heard of the outlet or genuinely cannot determine its bias, the rating should be "unknown"
 
-Respond ONLY with a JSON object in this EXACT format:
-{{"rating": 3}}
-or
-{{"rating": "unknown"}}
+You MUST return a JSON object with a single key "rating" containing either the integer score or the string "unknown".
 
 Outlet: {outlet_name}"""
 
@@ -115,10 +112,7 @@ Consider the language used, framing, and perspective presented in the article it
 Rules:
 - If you genuinely cannot determine the bias from the content, the rating should be "unknown"
 
-Respond ONLY with a JSON object in this EXACT format:
-{{"rating": 3}}
-or
-{{"rating": "unknown"}}
+You MUST return a JSON object with a single key "rating" containing either the integer score or the string "unknown".
 
 Article:
 {article_text}"""

@@ -511,23 +511,20 @@ Rules:
 - Do not match if the stories contradict each other (e.g. "price drop" vs "price increase")
 - Do not match broad opinion or analysis to a news event unless it is explicitly anchored to that same concrete event or ongoing situation
 - Use the context snippets to distinguish between similar-sounding but different events
-- If it matches, respond with the number of the matching story
-- If it does not match any story, respond with 0
+- If it matches, the match_id should be the number of the matching story
+- If it does not match any story, the match_id should be 0
 
-Respond ONLY with a JSON object in this EXACT format:
-{{"match_id": 0}}
-or
-{{"match_id": 2}}
+You MUST return a JSON object with a single key "match_id" containing the integer ID.
 
-Examples of correct NON-matches (should return {{"match_id": 0}}):
-- "Meta announces layoffs" vs "Epic Games lays off 900 workers" -> {{"match_id": 0}} (different companies, different events)
-- "Measles outbreak in Michigan" vs "Measles outbreak in Washington state" -> {{"match_id": 0}} (same disease, different locations)
-- "UFC fighter suspended for PED use" vs "MLB player suspended for PED use" -> {{"match_id": 0}} (different sports, different athletes)
-- "iPhone security alert" vs "Chrome zero-day vulnerability" -> {{"match_id": 0}} (different platforms, different vulnerabilities)
-- "NPR funding ruling" vs "Pentagon press policy ruling" -> {{"match_id": 0}} (different court cases)
-- "Grocery chain closing 17 stores" vs "Restaurant chain closing locations" -> {{"match_id": 0}} (different companies)
-- "Gold prices fall amid Iran war" vs "Trump says no ceasefire with Iran" -> {{"match_id": 0}} (different topics: finance vs diplomacy)
-- "How the Iran war affects trade recovery" vs "Iranian official killed in strike" -> {{"match_id": 0}} (analysis piece vs news event)"""
+Examples of correct NON-matches (should have match_id as 0):
+- "Meta announces layoffs" vs "Epic Games lays off 900 workers" (different companies, different events)
+- "Measles outbreak in Michigan" vs "Measles outbreak in Washington state" (same disease, different locations)
+- "UFC fighter suspended for PED use" vs "MLB player suspended for PED use" (different sports, different athletes)
+- "iPhone security alert" vs "Chrome zero-day vulnerability" (different platforms, different vulnerabilities)
+- "NPR funding ruling" vs "Pentagon press policy ruling" (different court cases)
+- "Grocery chain closing 17 stores" vs "Restaurant chain closing locations" (different companies)
+- "Gold prices fall amid Iran war" vs "Trump says no ceasefire with Iran" (different topics: finance vs diplomacy)
+- "How the Iran war affects trade recovery" vs "Iranian official killed in strike" (analysis piece vs news event)"""
 
 
 @observe()

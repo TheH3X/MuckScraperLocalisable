@@ -332,16 +332,12 @@ Rules:
 - Write exactly one short paragraph
 - Use 3 to 5 sentences
 - Explain what happened, why it matters, and the most important current development
-- No bullet points
-- No section labels
-- No markdown or prefatory text
-- Begin directly with the first sentence of the summary. Do not use phrases like "Here is the summary:".
 - Keep it sharp and readable for a front-page briefing
 
-Articles:
-{combined}
+Return the result as a JSON object with a single key "executive_summary" containing the text.
 
-Executive Summary:"""
+Articles:
+{combined}"""
 
     langfuse_context.update_current_observation(
         input=prompt,
@@ -353,12 +349,24 @@ Executive Summary:"""
         }
     )
     try:
-        summary = generate(prompt, task="summary", json_mode=False)
+        import json
+        summary_response = generate(prompt, task="summary", json_mode=True)
 
         langfuse_context.update_current_observation(
-            output=summary
+            output=summary_response
         )
 
+        if not summary_response:
+            return None
+            
+        try:
+            parsed = json.loads(summary_response)
+            summary = parsed.get("executive_summary", "")
+        except json.JSONDecodeError:
+            logger.warning(f"  Failed to parse summary JSON: '{summary_response}'")
+            return None
+
+        summary = summary.strip()
         if summary:
             logger.info(f"  Generated {analysis_type} summary for story: {story.title[:60]}...")
             return summary
@@ -522,30 +530,22 @@ Below are articles covering the same story:
 
 {combined}
 
-Write a detailed analytical report using this EXACT format:
+Write a detailed analytical report.
 
-The story: [Write 2-3 sentences explaining what happened factually]
-
-Why it matters: [Explain the significance of this story — who it affects and how]
-
-Key details: [List the most important facts, figures, or developments from the coverage]
-
-Different perspectives: [Describe how different outlets or sources are framing this story. If coverage is uniform, say what angle is being emphasized.]
-
-What's missing: [Identify what angles or questions seem absent from the coverage]
-
-What's next: [Write one sentence on what to watch for]
+The report MUST be returned as a JSON object with the following keys:
+- "the_story": [Write 2-3 sentences explaining what happened factually]
+- "why_it_matters": [Explain the significance of this story — who it affects and how]
+- "key_details": [List the most important facts, figures, or developments from the coverage]
+- "different_perspectives": [Describe how different outlets or sources are framing this story. If coverage is uniform, say what angle is being emphasized.]
+- "whats_missing": [Identify what angles or questions seem absent from the coverage]
+- "whats_next": [Write one sentence on what to watch for]
 
 Rules:
-- Use EXACTLY the labels shown above including the colon
-- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
+- The brackets [ ] are instructions for you. Replace them with your actual analysis.
 - Stay neutral and analytical
 - Compare only the outlets and perspectives actually present in the article list
 - Do not use left/right political framing unless the story is explicitly about politics, government, law, elections, or policy
-- No markdown, no extra formatting
-- Do not add any text before or after the structure above"""
-
-
+- Return ONLY valid JSON."""
 
     langfuse_context.update_current_observation(
         input=prompt,
@@ -557,8 +557,37 @@ Rules:
     )
 
     try:
-        report = generate(prompt, task="report", json_mode=False)
-        langfuse_context.update_current_observation(output=report)
+        import json
+        report_response = generate(prompt, task="report", json_mode=True)
+        langfuse_context.update_current_observation(output=report_response)
+        
+        if not report_response:
+            return None
+
+        try:
+            parsed = json.loads(report_response)
+            
+            # Reconstruct the expected text format
+            sections = []
+            if "the_story" in parsed:
+                sections.append(f"The story: {parsed['the_story']}")
+            if "why_it_matters" in parsed:
+                sections.append(f"Why it matters: {parsed['why_it_matters']}")
+            if "key_details" in parsed:
+                sections.append(f"Key details: {parsed['key_details']}")
+            if "different_perspectives" in parsed:
+                sections.append(f"Different perspectives: {parsed['different_perspectives']}")
+            if "whats_missing" in parsed:
+                sections.append(f"What's missing: {parsed['whats_missing']}")
+            if "whats_next" in parsed:
+                sections.append(f"What's next: {parsed['whats_next']}")
+            
+            report = "\n\n".join(sections)
+            if not report.strip():
+                report = report_response # fallback
+        except json.JSONDecodeError:
+            report = report_response # Fallback for old custom DB prompts
+            
         if report:
             logger.info(f"  Generated {analysis_type} deep report for: {story.title[:60]}...")
             return report
@@ -591,32 +620,25 @@ def summarize_article(article):
 
     prompt = f"""You are a {persona} writing a tight Smart Brevity-style article briefing.
 
-Below is a news article. Write a concise briefing using EXACTLY this format:
+Below is a news article. Write a concise briefing.
 
-The big picture: [Write one direct sentence on what happened.]
-
-Why it matters: [Write 1-2 short sentences on why this story matters.]
-
-Quick analysis: [Write 1-2 short sentences on the framing, tension, consequence, uncertainty, or what stands out most.]
-
-What's next: [Write one sentence on what to watch for next.]
+The briefing MUST be returned as a JSON object with the following keys:
+- "the_big_picture": [Write one direct sentence on what happened.]
+- "why_it_matters": [Write 1-2 short sentences on why this story matters.]
+- "quick_analysis": [Write 1-2 short sentences on the framing, tension, consequence, uncertainty, or what stands out most.]
+- "whats_next": [Write one sentence on what to watch for next.]
 
 Rules:
-- Use EXACTLY the labels shown above including the colon
-- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
-- No bullets
+- The brackets [ ] are instructions for you. Replace them with your actual analysis.
 - Keep the full response to 4 short sections only
 - Be concrete, not generic
 - Do not repeat the same idea in multiple sections
-- No markdown, no extra formatting, no commentary
-- Do not add any text before or after the structure above
+- Return ONLY valid JSON.
 
 Article title: {article.title}
 
 Article content:
-{clean_content}
-
-Summary:"""
+{clean_content}"""
 
     langfuse_context.update_current_observation(
         input=prompt,
@@ -624,8 +646,31 @@ Summary:"""
     )
 
     try:
-        summary = generate(prompt, task="summary", json_mode=False)
-        langfuse_context.update_current_observation(output=summary)
+        import json
+        summary_response = generate(prompt, task="summary", json_mode=True)
+        langfuse_context.update_current_observation(output=summary_response)
+        
+        if not summary_response:
+            return None
+            
+        try:
+            parsed = json.loads(summary_response)
+            sections = []
+            if "the_big_picture" in parsed:
+                sections.append(f"The big picture: {parsed['the_big_picture']}")
+            if "why_it_matters" in parsed:
+                sections.append(f"Why it matters: {parsed['why_it_matters']}")
+            if "quick_analysis" in parsed:
+                sections.append(f"Quick analysis: {parsed['quick_analysis']}")
+            if "whats_next" in parsed:
+                sections.append(f"What's next: {parsed['whats_next']}")
+            
+            summary = "\n\n".join(sections)
+            if not summary.strip():
+                summary = summary_response
+        except json.JSONDecodeError:
+            summary = summary_response
+            
         if summary:
             logger.info(f"  Generated {analysis_type} summary for article: {article.title[:60]}...")
             return summary
@@ -655,81 +700,57 @@ def generate_article_deep_analysis(article):
     if analysis_type == "politics":
         prompt = f"""You are a political analyst writing a focused article analysis.
 
-Analyze this political article using EXACTLY this format:
-
-Core argument: [Write 2-3 sentences summarizing the article's main thesis and factual basis]
-
-How it frames the issue: [Describe what assumptions, emphasis, or political framing the piece uses]
-
-What evidence it relies on: [Identify the main facts, sources, or claims used to support the argument]
-
-What to question or watch: [Note potential blind spots, unresolved questions, or what future reporting should clarify]
+Analyze this political article. The analysis MUST be returned as a JSON object with the following keys:
+- "core_argument": [Write 2-3 sentences summarizing the article's main thesis and factual basis]
+- "how_it_frames_the_issue": [Describe what assumptions, emphasis, or political framing the piece uses]
+- "what_evidence_it_relies_on": [Identify the main facts, sources, or claims used to support the argument]
+- "what_to_question_or_watch": [Note potential blind spots, unresolved questions, or what future reporting should clarify]
 
 Rules:
-- Use EXACTLY the labels shown above including the colon
-- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
+- The brackets [ ] are instructions for you. Replace them with your actual analysis.
 - Stay analytical, not partisan
-- No markdown, no extra formatting
-- Do not add any text before or after the structure above
+- Return ONLY valid JSON.
 
 Article title: {article.title}
 
 Article content:
-{clean_content}
-
-Analysis:"""
+{clean_content}"""
     elif analysis_type == "science":
         prompt = f"""You are a science and technology journalist writing a technical analysis.
 
-Analyze this article using EXACTLY this format:
-
-What the article says: [Write 2-3 sentences summarizing the core finding or development]
-
-Technical substance: [Describe the key mechanism, data, or technical concept explained in the article]
-
-Why this matters: [Explain what the development changes in practical or scientific terms]
-
-What remains uncertain: [Note limitations, caveats, unanswered questions, or hype risk]
+Analyze this article. The analysis MUST be returned as a JSON object with the following keys:
+- "what_the_article_says": [Write 2-3 sentences summarizing the core finding or development]
+- "technical_substance": [Describe the key mechanism, data, or technical concept explained in the article]
+- "why_this_matters": [Explain what the development changes in practical or scientific terms]
+- "what_remains_uncertain": [Note limitations, caveats, unanswered questions, or hype risk]
 
 Rules:
-- Use EXACTLY the labels shown above including the colon
-- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
+- The brackets [ ] are instructions for you. Replace them with your actual analysis.
 - Prioritize clarity and technical accuracy
-- No markdown, no extra formatting
-- Do not add any text before or after the structure above
+- Return ONLY valid JSON.
 
 Article title: {article.title}
 
 Article content:
-{clean_content}
-
-Analysis:"""
+{clean_content}"""
     elif analysis_type == "business":
         prompt = f"""You are a financial journalist writing a markets and business analysis.
 
-Analyze this article using EXACTLY this format:
-
-What happened: [Write 2-3 sentences summarizing the business or market event]
-
-What is driving it: [Explain the main financial, operational, or policy factors behind it]
-
-Who is affected: [Identify the companies, sectors, investors, or consumers most affected]
-
-What to watch next: [Note risks, catalysts, or decision points that matter going forward]
+Analyze this article. The analysis MUST be returned as a JSON object with the following keys:
+- "what_happened": [Write 2-3 sentences summarizing the business or market event]
+- "what_is_driving_it": [Explain the main financial, operational, or policy factors behind it]
+- "who_is_affected": [Identify the companies, sectors, investors, or consumers most affected]
+- "what_to_watch_next": [Note risks, catalysts, or decision points that matter going forward]
 
 Rules:
-- Use EXACTLY the labels shown above including the colon
-- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
+- The brackets [ ] are instructions for you. Replace them with your actual analysis.
 - Focus on economic significance, not fluff
-- No markdown, no extra formatting
-- Do not add any text before or after the structure above
+- Return ONLY valid JSON.
 
 Article title: {article.title}
 
 Article content:
-{clean_content}
-
-Analysis:"""
+{clean_content}"""
     else:
         return None
 
@@ -739,8 +760,39 @@ Analysis:"""
     )
 
     try:
-        analysis = generate(prompt, task="report", json_mode=False)
-        langfuse_context.update_current_observation(output=analysis)
+        import json
+        analysis_response = generate(prompt, task="report", json_mode=True)
+        langfuse_context.update_current_observation(output=analysis_response)
+        
+        if not analysis_response:
+            return None
+            
+        try:
+            parsed = json.loads(analysis_response)
+            sections = []
+            
+            if analysis_type == "politics":
+                if "core_argument" in parsed: sections.append(f"Core argument: {parsed['core_argument']}")
+                if "how_it_frames_the_issue" in parsed: sections.append(f"How it frames the issue: {parsed['how_it_frames_the_issue']}")
+                if "what_evidence_it_relies_on" in parsed: sections.append(f"What evidence it relies on: {parsed['what_evidence_it_relies_on']}")
+                if "what_to_question_or_watch" in parsed: sections.append(f"What to question or watch: {parsed['what_to_question_or_watch']}")
+            elif analysis_type == "science":
+                if "what_the_article_says" in parsed: sections.append(f"What the article says: {parsed['what_the_article_says']}")
+                if "technical_substance" in parsed: sections.append(f"Technical substance: {parsed['technical_substance']}")
+                if "why_this_matters" in parsed: sections.append(f"Why this matters: {parsed['why_this_matters']}")
+                if "what_remains_uncertain" in parsed: sections.append(f"What remains uncertain: {parsed['what_remains_uncertain']}")
+            elif analysis_type == "business":
+                if "what_happened" in parsed: sections.append(f"What happened: {parsed['what_happened']}")
+                if "what_is_driving_it" in parsed: sections.append(f"What is driving it: {parsed['what_is_driving_it']}")
+                if "who_is_affected" in parsed: sections.append(f"Who is affected: {parsed['who_is_affected']}")
+                if "what_to_watch_next" in parsed: sections.append(f"What to watch next: {parsed['what_to_watch_next']}")
+            
+            analysis = "\n\n".join(sections)
+            if not analysis.strip():
+                analysis = analysis_response
+        except json.JSONDecodeError:
+            analysis = analysis_response
+
         if analysis:
             logger.info(f"  Generated {analysis_type} article analysis: {article.title[:60]}...")
             return analysis
