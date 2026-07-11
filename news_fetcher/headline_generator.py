@@ -59,7 +59,7 @@ Return the result as a JSON object with a single key "headline" containing the t
 
         try:
             parsed = json.loads(headline_response)
-            headline = parsed.get("headline", "")
+            headline = parsed.get("headline") or ""
         except json.JSONDecodeError:
             logger.warning(f"Failed to parse headline JSON: '{headline_response}'")
             return None

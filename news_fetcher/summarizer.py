@@ -80,8 +80,9 @@ def _extract_story_summary_text(response):
             return text or None
 
     cleaned = response.strip()
-    if cleaned and not cleaned.startswith("{"):
-        return cleaned
+    if cleaned:
+        cleaned = re.sub(r"(?i)^executive summary:\s*", "", cleaned, count=1).strip()
+        return cleaned or None
     return None
 
 
@@ -408,6 +409,10 @@ Articles:
         )
 
         summary = _extract_story_summary_text(summary_response)
+        if not summary and summary_response:
+            # Fallback for legacy plain-text custom DB prompts (see generate_deep_report)
+            summary = summary_response.strip()
+            summary = re.sub(r"(?i)^executive summary:\s*", "", summary, count=1).strip() or None
         if not summary:
             logger.warning(
                 "  Failed to parse summary JSON: '%s'",
