@@ -1067,7 +1067,7 @@ if __name__ == "__main__":
         lambda: run_all_fetches(run_full_pipeline=should_run_full_pipeline()),
         trigger=CronTrigger(hour=FETCH_SCHEDULE_HOURS, minute=0, timezone=TIMEZONE),
         id="fetch_job",
-        name="Scheduled news fetch (America/New_York)",
+        name=f"Scheduled news fetch ({TIMEZONE})",
         replace_existing=True
     )
 

@@ -69,6 +69,19 @@ class SouthAfricaCountryConfigTests(unittest.TestCase):
         self.assertIn("get_scheduled_fetches()", seed_source)
         self.assertNotIn('{"label": "SA Politics", "icon": "SP"}', seed_source)
 
+    def test_publish_edition_uses_country_timezone(self):
+        source = (ROOT / "news_fetcher" / "fetch_and_store_articles.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("get_timezone()", source)
+        self.assertNotIn("America/New_York", source)
+        self.assertNotIn("now_eastern", source)
+
+    def test_scheduler_job_name_uses_configured_timezone(self):
+        source = (ROOT / "news_fetcher" / "scheduler.py").read_text(encoding="utf-8")
+        self.assertIn('name=f"Scheduled news fetch ({TIMEZONE})"', source)
+        self.assertNotIn("Scheduled news fetch (America/New_York)", source)
+
 
 if __name__ == "__main__":
     unittest.main()
