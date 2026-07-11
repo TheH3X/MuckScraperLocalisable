@@ -17,6 +17,13 @@ def get_timezone():
     return get_config()["timezone"]
 
 
+def get_topics():
+    return get_config().get("topics", [])
+
+
+def get_scheduled_fetches():
+    return get_config().get("scheduled_fetches", [])
+
 
 COUNTRY_CONFIGS = {
     "za": {
@@ -29,6 +36,114 @@ COUNTRY_CONFIGS = {
         "newsapi_country": "za",
         "gnews_country": "za",
 
+        # Topic taxonomy shown in the admin sidebar / classifier fallback
+        "topics": [
+            {"label": "SA Politics", "icon": "SP"},
+            {"label": "SA News", "icon": "SN"},
+            {"label": "International News", "icon": "IN"},
+            {"label": "Technology", "icon": "TE"},
+            {"label": "Science", "icon": "SC"},
+            {"label": "Medicine", "icon": "MD"},
+            {"label": "AI", "icon": "AI"},
+            {"label": "Gaming", "icon": "GA"},
+            {"label": "Sports", "icon": "SP"},
+            {"label": "Business", "icon": "BF"},
+            {"label": "Other", "icon": "OT"},
+        ],
+
+        # Scheduled fetch queries (seeded onto matching Topic rows)
+        "scheduled_fetches": [
+            {
+                "label": "SA Politics",
+                "mode": "query",
+                "country": None,
+                "category": None,
+                "query": "South Africa politics parliament ANC DA EFF government Ramaphosa",
+                "gnews_query": "South Africa politics parliament government",
+                "gnews_category": None,
+            },
+            {
+                "label": "SA News",
+                "mode": "top",
+                "country": "za",
+                "category": "general",
+                "query": None,
+                "gnews_query": None,
+                "gnews_category": "nation",
+            },
+            {
+                "label": "Business",
+                "mode": "top",
+                "country": "za",
+                "category": "business",
+                "query": None,
+                "gnews_query": None,
+                "gnews_category": "business",
+            },
+            {
+                "label": "Science",
+                "mode": "query",
+                "country": None,
+                "category": None,
+                "query": "science research space",
+                "gnews_query": "science",
+                "gnews_category": "science",
+            },
+            {
+                "label": "Technology",
+                "mode": "query",
+                "country": None,
+                "category": None,
+                "query": "technology gadgets software tech",
+                "gnews_query": "technology",
+                "gnews_category": "technology",
+            },
+            {
+                "label": "Medicine",
+                "mode": "query",
+                "country": None,
+                "category": None,
+                "query": "medicine health medical disease hospital",
+                "gnews_query": "health medicine",
+                "gnews_category": "health",
+            },
+            {
+                "label": "AI",
+                "mode": "query",
+                "country": None,
+                "category": None,
+                "query": "Artificial Intelligence AI machine learning ChatGPT generative",
+                "gnews_query": "Artificial Intelligence AI machine learning",
+                "gnews_category": "technology",
+            },
+            {
+                "label": "Gaming",
+                "mode": "query",
+                "country": None,
+                "category": None,
+                "query": "Video games gaming esports PlayStation Xbox Nintendo PC",
+                "gnews_query": "Video games gaming esports",
+                "gnews_category": "entertainment",
+            },
+            {
+                "label": "Sports",
+                "mode": "top",
+                "country": "za",
+                "category": "sports",
+                "query": None,
+                "gnews_query": None,
+                "gnews_category": "sports",
+            },
+            {
+                "label": "International News",
+                "mode": "query",
+                "country": None,
+                "category": None,
+                "query": "international world global news conflicts diplomacy Africa",
+                "gnews_query": "world global news Africa",
+                "gnews_category": "world",
+            },
+        ],
 
         # RSS feeds
         "rss_feeds": [

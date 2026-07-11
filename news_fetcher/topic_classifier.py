@@ -14,9 +14,7 @@ langfuse = Langfuse(
     host=os.environ.get("LANGFUSE_HOST", "http://localhost:3000")
 )
 
-from aggregator.country_config import get_config
-
-_cfg = get_config()
+from aggregator.country_config import get_config, get_topics
 
 
 def get_valid_topics():
@@ -32,8 +30,8 @@ def get_valid_topics():
             return [t.name for t in db_topics]
     except Exception as e:
         logger.warning("[Classifier] Could not load topics from DB: %s — falling back to config", e)
-    # Fallback to country config
-    return [t["label"] for t in _cfg.get("topics", [])] or ["Other"]
+    # Fallback to country config (e.g. SA Politics / SA News before seed)
+    return [t["label"] for t in get_topics()] or ["Other"]
 
 
 def get_topic_hints():
@@ -72,7 +70,7 @@ def classify_article(title, content_snippet=""):
         if clean:
             text += f"\n{clean}"
 
-    country_name = _cfg.get("country_name", "the given country")
+    country_name = get_config().get("country_name", "the given country")
     valid_topics = get_valid_topics()
     topic_hints = get_topic_hints()
 

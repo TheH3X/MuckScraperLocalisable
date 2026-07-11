@@ -364,7 +364,9 @@ def list_articles(per_page=25, force_multi=False):
         query = query.having(func.count(Article.id) > 1)
 
     if active_label:
-        topic = Topic.query.filter_by(name=active_label).first()
+        topic = Topic.query.filter(
+            (Topic.name == active_label) | (Topic.label == active_label)
+        ).first()
         if topic:
             query = query.filter(Story.topics.contains(topic))
         else:
