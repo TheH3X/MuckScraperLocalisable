@@ -26,6 +26,65 @@ def strip_html(text):
     return text
 
 
+_SUMMARY_JSON_SUFFIX = (
+    '\n\nReturn ONLY a JSON object with a single key "executive_summary" '
+    "containing the summary paragraph as a string. "
+    "Do not echo the articles, rules, or task back in the JSON."
+)
+
+
+def _finalize_story_summary_prompt(prompt):
+    """Normalize DB/default prompts so json_mode returns a single summary field."""
+    prompt = prompt.rstrip()
+    if prompt.endswith("Executive Summary:"):
+        prompt = prompt[: -len("Executive Summary:")].rstrip()
+    if "executive_summary" not in prompt.lower():
+        prompt += _SUMMARY_JSON_SUFFIX
+    return prompt
+
+
+def _extract_story_summary_text(response):
+    """Parse story summary output from JSON or plain-text fallback."""
+    if not response:
+        return None
+
+    import json
+
+    try:
+        parsed = json.loads(response)
+        if isinstance(parsed, str):
+            return parsed.strip() or None
+        if isinstance(parsed, dict):
+            if any(key in parsed for key in ("articles", "rules", "task")):
+                return None
+            for key in ("executive_summary", "summary", "text", "content"):
+                value = parsed.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            for value in parsed.values():
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    except json.JSONDecodeError:
+        pass
+
+    match = re.search(
+        r'"executive_summary"\s*:\s*"((?:\\.|[^"\\])*)"',
+        response,
+        re.DOTALL,
+    )
+    if match:
+        try:
+            return json.loads(f'"{match.group(1)}"').strip() or None
+        except json.JSONDecodeError:
+            text = match.group(1).strip()
+            return text or None
+
+    cleaned = response.strip()
+    if cleaned and not cleaned.startswith("{"):
+        return cleaned
+    return None
+
+
 STORY_FILTER_STOPWORDS = {
     "about", "after", "again", "against", "amid", "among", "and", "are",
     "around", "before", "being", "but", "can", "could", "did", "does",
@@ -327,10 +386,10 @@ Rules:
 - Explain what happened, why it matters, and the most important current development
 - Keep it sharp and readable for a front-page briefing
 
-Return the result as a JSON object with a single key "executive_summary" containing the text.
-
 Articles:
 {combined}"""
+
+    prompt = _finalize_story_summary_prompt(prompt)
 
     langfuse_context.update_current_observation(
         input=prompt,
@@ -342,28 +401,22 @@ Articles:
         }
     )
     try:
-        import json
         summary_response = generate(prompt, task="summary", json_mode=True)
 
         langfuse_context.update_current_observation(
             output=summary_response
         )
 
-        if not summary_response:
-            return None
-            
-        try:
-            parsed = json.loads(summary_response)
-            summary = parsed.get("executive_summary", "")
-        except json.JSONDecodeError:
-            logger.warning(f"  Failed to parse summary JSON: '{summary_response}'")
+        summary = _extract_story_summary_text(summary_response)
+        if not summary:
+            logger.warning(
+                "  Failed to parse summary JSON: '%s'",
+                (summary_response or "")[:500],
+            )
             return None
 
-        summary = summary.strip()
-        if summary:
-            logger.info(f"  Generated {analysis_type} summary for story: {story.title[:60]}...")
-            return summary
-        return None
+        logger.info(f"  Generated {analysis_type} summary for story: {story.title[:60]}...")
+        return summary
 
     except Exception as e:
         logger.info(f"  Error generating summary for '{story.title}': {e}")
