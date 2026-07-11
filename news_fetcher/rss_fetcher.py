@@ -112,6 +112,7 @@ def fetch_and_store_rss(progress_cb=None):
         "stored": 0,
         "new_outlets": 0,
         "stories_touched": 0,
+        "story_ids": [],
         "skipped": {},
         "scrape_statuses": {},
         "bias_buckets": {},
@@ -142,6 +143,9 @@ def fetch_and_store_rss(progress_cb=None):
             metrics["stored"] += feed_metrics.get("stored", 0)
             metrics["new_outlets"] += feed_metrics.get("new_outlets", 0)
             metrics["stories_touched"] += feed_metrics.get("stories_touched", 0)
+            metrics["story_ids"] = sorted(
+                set(metrics.get("story_ids", [])) | set(feed_metrics.get("story_ids", []))
+            )
             merge_count_maps(metrics["skipped"], feed_metrics.get("skipped"))
             merge_count_maps(metrics["scrape_statuses"], feed_metrics.get("scrape_statuses"))
             merge_count_maps(metrics["bias_buckets"], feed_metrics.get("bias_buckets"))
@@ -351,6 +355,7 @@ def _enrich_stories_with_feed_set(
         "stored": 0,
         "new_outlets": 0,
         "stories_touched": 0,
+        "story_ids": [],
         "skipped": {},
         "scrape_statuses": {},
         "bias_buckets": {},
@@ -416,6 +421,7 @@ def _enrich_stories_with_feed_set(
     metrics["stored"] = store_metrics.get("stored", 0)
     metrics["new_outlets"] = store_metrics.get("new_outlets", 0)
     metrics["stories_touched"] = store_metrics.get("stories_touched", 0)
+    metrics["story_ids"] = store_metrics.get("story_ids", [])
     merge_count_maps(metrics["skipped"], store_metrics.get("skipped"))
     merge_count_maps(metrics["scrape_statuses"], store_metrics.get("scrape_statuses"))
     merge_count_maps(metrics["bias_buckets"], store_metrics.get("bias_buckets"))
@@ -449,6 +455,7 @@ def enrich_skewed_stories_with_right_feeds(
         "stored": 0,
         "new_outlets": 0,
         "stories_touched": 0,
+        "story_ids": [],
         "skipped": {},
         "scrape_statuses": {},
         "bias_buckets": {},

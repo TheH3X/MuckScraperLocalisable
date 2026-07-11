@@ -2,6 +2,8 @@
 # news_fetcher/headline_generator.py
 import logging
 import os
+from datetime import datetime
+
 from news_fetcher.langfuse_client import langfuse
 from langfuse.decorators import observe, langfuse_context
 from news_fetcher.llm_client import generate
@@ -76,11 +78,13 @@ Return the result as a JSON object with a single key "headline" containing the t
         return None
 
 
-def generate_missing_headlines():
+def generate_missing_headlines(story_ids=None, recent_hours=24):
     """
     Find multi-article stories without headlines and generate them.
-    Called during Ollama catchup.
+    When story_ids is provided, only those stories are considered.
     """
+    from datetime import timedelta
+
     from aggregator import db
     from aggregator.models import Story
     from news_fetcher.llm_client import check_ollama_status
@@ -89,8 +93,18 @@ def generate_missing_headlines():
         logger.info("Ollama offline, skipping headline generation.")
         return
 
-    # Find multi-article stories without a headline
-    stories = Story.query.all()
+    query = Story.query
+    if story_ids:
+        story_ids = [story_id for story_id in story_ids if story_id]
+        if not story_ids:
+            logger.info("No touched stories supplied for headline generation.")
+            return
+        query = query.filter(Story.id.in_(story_ids))
+    else:
+        cutoff = datetime.utcnow() - timedelta(hours=recent_hours)
+        query = query.filter(Story.created_at >= cutoff)
+
+    stories = query.all()
     missing = [s for s in stories if len(s.articles) >= 2 and not s.headline]
 
     if not missing:

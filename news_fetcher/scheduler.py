@@ -200,7 +200,7 @@ def _run_targeted_rss_enrichment_pass(config, run_metrics, ollama_state, entry_r
         logging.info(f"--- Refreshing outlet bias after targeted {direction} enrichment ---")
         _check_ollama_status_for_report(ollama_state, config["bias_retry_ollama_label"])
         try:
-            retry_unrated_outlets()
+            retry_unrated_outlets(ollama_budget=8)
             steps[config["bias_retry_step"]] = {"status": "ok"}
         except Exception as e:
             db.session.rollback()
@@ -238,7 +238,7 @@ def _run_targeted_rss_enrichment_pass(config, run_metrics, ollama_state, entry_r
                 if second_pass_metrics.get("stored", 0) > 0:
                     _check_ollama_status_for_report(ollama_state, config["second_pass_bias_retry_ollama_label"])
                     try:
-                        retry_unrated_outlets()
+                        retry_unrated_outlets(ollama_budget=8)
                         steps[config["second_pass_bias_retry_step"]] = {"status": "ok"}
                     except Exception as e:
                         db.session.rollback()
@@ -767,6 +767,7 @@ def run_all_fetches(run_full_pipeline=True):
             "steps": {},
         }
         ollama_state["up_at_start"] = _check_ollama_status_for_report(ollama_state, "run_start")
+        touched_story_ids = set()
 
         # Fetch all categories
         for fetch in SCHEDULED_FETCHES:
@@ -799,6 +800,7 @@ def run_all_fetches(run_full_pipeline=True):
                     run_metrics["totals"]["stored"] += provider_metrics.get("stored", 0)
                     run_metrics["totals"]["new_outlets"] += provider_metrics.get("new_outlets", 0)
                     run_metrics["totals"]["stories_touched"] += provider_metrics.get("stories_touched", 0)
+                    touched_story_ids.update(provider_metrics.get("story_ids", []))
                     _merge_counts(run_metrics["totals"]["skipped"], provider_metrics.get("skipped"))
                     _merge_counts(run_metrics["totals"]["scrape_statuses"], provider_metrics.get("scrape_statuses"))
                     _merge_counts(run_metrics["totals"]["bias_buckets"], provider_metrics.get("bias_buckets"))
@@ -829,6 +831,7 @@ def run_all_fetches(run_full_pipeline=True):
             run_metrics["totals"]["stored"] += rss_metrics.get("stored", 0)
             run_metrics["totals"]["new_outlets"] += rss_metrics.get("new_outlets", 0)
             run_metrics["totals"]["stories_touched"] += rss_metrics.get("stories_touched", 0)
+            touched_story_ids.update(rss_metrics.get("story_ids", []))
             _merge_counts(run_metrics["totals"]["skipped"], rss_metrics.get("skipped"))
             _merge_counts(run_metrics["totals"]["scrape_statuses"], rss_metrics.get("scrape_statuses"))
             _merge_counts(run_metrics["totals"]["bias_buckets"], rss_metrics.get("bias_buckets"))
@@ -850,7 +853,7 @@ def run_all_fetches(run_full_pipeline=True):
         _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
         logging.info("--- Generating missing headlines (Batch Pass) ---")
         try:
-            generate_missing_headlines()
+            generate_missing_headlines(story_ids=touched_story_ids)
             run_metrics["steps"]["generate_missing_headlines"] = {"status": "ok"}
         except Exception as e:
             db.session.rollback()
@@ -869,7 +872,7 @@ def run_all_fetches(run_full_pipeline=True):
             logging.info("--- Retrying unrated outlets (Bias Checker) ---")
             _check_ollama_status_for_report(ollama_state, "before_retry_unrated_outlets")
             try:
-                retry_unrated_outlets()
+                retry_unrated_outlets(ollama_budget=30)
                 run_metrics["steps"]["retry_unrated_outlets"] = {"status": "ok"}
             except Exception as e:
                 db.session.rollback()

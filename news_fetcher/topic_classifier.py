@@ -12,6 +12,30 @@ from aggregator.country_config import get_config
 
 _cfg = get_config()
 
+_CLASSIFICATION_BATCH_CACHE = {}
+_TRUSTED_FETCH_TOPIC_SKIP = frozenset({"Custom", "Global News"})
+
+
+def begin_classification_batch():
+    """Cache topic metadata for classify_article calls in one ingest batch."""
+    valid_topics = get_valid_topics()
+    topic_hints = get_topic_hints()
+    topic_lines = []
+    for t in valid_topics:
+        if t == "Other":
+            continue
+        hint = topic_hints.get(t)
+        if hint:
+            topic_lines.append(f"- {t}: {hint}")
+        else:
+            topic_lines.append(f"- {t}")
+    _CLASSIFICATION_BATCH_CACHE["valid_topics"] = valid_topics
+    _CLASSIFICATION_BATCH_CACHE["topics_list"] = "\n".join(topic_lines)
+
+
+def clear_classification_batch():
+    _CLASSIFICATION_BATCH_CACHE.clear()
+
 
 def get_valid_topics():
     """
@@ -92,20 +116,23 @@ def classify_article(title, content_snippet=""):
             text += f"\n{clean}"
 
     country_name = _cfg.get("country_name", "the given country")
-    valid_topics = get_valid_topics()
-    topic_hints = get_topic_hints()
-
-    # Build the topics list
-    topic_lines = []
-    for t in valid_topics:
-        if t == "Other":
-            continue
-        hint = topic_hints.get(t)
-        if hint:
-            topic_lines.append(f"- {t}: {hint}")
-        else:
-            topic_lines.append(f"- {t}")
-    topics_list = "\n".join(topic_lines)
+    cache = _CLASSIFICATION_BATCH_CACHE
+    if cache.get("topics_list") and cache.get("valid_topics"):
+        valid_topics = cache["valid_topics"]
+        topics_list = cache["topics_list"]
+    else:
+        valid_topics = get_valid_topics()
+        topic_hints = get_topic_hints()
+        topic_lines = []
+        for t in valid_topics:
+            if t == "Other":
+                continue
+            hint = topic_hints.get(t)
+            if hint:
+                topic_lines.append(f"- {t}: {hint}")
+            else:
+                topic_lines.append(f"- {t}")
+        topics_list = "\n".join(topic_lines)
 
     prompt = f"""Classify this article into categories.
 
