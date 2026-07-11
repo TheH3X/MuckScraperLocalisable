@@ -10,25 +10,25 @@
     <title>Full Archive — MuckScraper</title>
     <style>
         :root {
-            --bg:         #f4f5f9;
+            --bg:         #fbf9f4;
             --surface:    #ffffff;
-            --text:       #16161f;
-            --text-muted: #565a70;
-            --text-faint: #8b8fa3;
-            --border:     #e8e9f2;
-            --shadow:     0 10px 30px rgba(31, 20, 80, 0.08);
-            --chip-bg:    #f0f1fa;
+            --text:       #1c1a17;
+            --text-muted: #5c574e;
+            --text-faint: #928c7f;
+            --border:     #ddd6c8;
+            --shadow:     0 8px 24px rgba(40, 30, 10, 0.06);
+            --chip-bg:    #f2efe4;
         }
 
         [data-theme="dark"] {
-            --bg:         #12111c;
-            --surface:    #1b1a29;
-            --text:       #f0f1fa;
-            --text-muted: #b3b5cc;
-            --text-faint: #7d80a0;
-            --border:     #2c2b3f;
-            --shadow:     0 10px 30px rgba(0,0,0,0.4);
-            --chip-bg:    #232236;
+            --bg:         #17140f;
+            --surface:    #1f1b15;
+            --text:       #f3efe6;
+            --text-muted: #c2bbaa;
+            --text-faint: #8f8776;
+            --border:     #3a3427;
+            --shadow:     0 8px 24px rgba(0,0,0,0.4);
+            --chip-bg:    #2a251c;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -40,28 +40,58 @@
             transition: background 0.2s, color 0.2s;
         }
 
-        .topbar {
-            background: linear-gradient(120deg, #4c1d95 0%, #7c3aed 45%, #db2777 100%);
-            padding: 16px 32px;
+        .utility-bar {
             display: flex;
             align-items: center;
             justify-content: space-between;
-        }
-        .brand { color: #fff; font-size: 20px; font-weight: 900; text-decoration: none; letter-spacing: -0.5px; }
-        .theme-toggle {
-            background: rgba(255,255,255,0.15);
-            border: 1px solid rgba(255,255,255,0.3);
-            color: #fff;
-            padding: 7px 14px;
-            border-radius: 10px;
-            cursor: pointer;
+            padding: 10px 24px;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
             font-size: 12px;
             font-weight: 700;
         }
-        .theme-toggle:hover { background: rgba(255,255,255,0.25); }
+        .utility-bar a { text-decoration: none; color: var(--text-muted); }
+        .utility-bar a:hover { color: var(--text); text-decoration: underline; }
+        .theme-toggle {
+            background: var(--chip-bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 5px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 700;
+        }
+        .theme-toggle:hover { border-color: var(--text-muted); }
 
-        .main { max-width: 800px; margin: 0 auto; padding: 48px 24px 80px; }
-        h1 { font-size: 30px; font-weight: 900; margin-bottom: 8px; letter-spacing: -0.5px; }
+        .masthead {
+            text-align: center;
+            padding: 36px 20px 22px;
+            border-bottom: 3px solid transparent;
+            border-image: linear-gradient(90deg, #6d28d9, #db2777, #f59e0b) 1;
+        }
+        .wordmark {
+            font-family: Georgia, "Times New Roman", serif;
+            font-size: 46px;
+            font-weight: 900;
+            letter-spacing: -1px;
+            background: linear-gradient(90deg, #6d28d9, #db2777, #f59e0b);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            text-decoration: none;
+        }
+        .masthead .tagline {
+            font-size: 12px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 2.5px;
+            color: var(--text-muted);
+            margin-top: 10px;
+        }
+
+        .main { max-width: 760px; margin: 0 auto; padding: 40px 24px 80px; }
+        h1 { font-family: Georgia, "Times New Roman", serif; font-size: 28px; font-weight: 700; margin-bottom: 8px; letter-spacing: -0.3px; }
         .sub { color: var(--text-faint); font-size: 14px; margin-bottom: 40px; }
 
         .day-group { margin-bottom: 28px; }
@@ -72,6 +102,7 @@
             letter-spacing: 0.6px;
             color: var(--text-faint);
             margin-bottom: 12px;
+            font-family: Georgia, "Times New Roman", serif;
         }
 
         .edition-row {
@@ -84,17 +115,17 @@
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            padding: 12px 18px;
-            border-radius: 14px;
+            padding: 10px 16px;
+            border-radius: 8px;
             background: var(--surface);
             border: 1px solid var(--border);
             box-shadow: var(--shadow);
             text-decoration: none;
             color: var(--text);
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 700;
         }
-        .edition-link:hover { border-color: #7c3aed; color: #7c3aed; }
+        .edition-link:hover { border-color: #6d28d9; color: #6d28d9; }
 
         .type-dot { width: 9px; height: 9px; border-radius: 50%; }
         .type-dot.morning   { background: #f59e0b; }
@@ -107,14 +138,19 @@
 </head>
 <body>
 
-<div class="topbar">
-    <a class="brand" href="{{ url_for('public.latest_edition') }}">MuckScraper</a>
+<div class="utility-bar">
+    <a href="{{ url_for('public.latest_edition') }}"><strong>MuckScraper</strong></a>
     <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙 Dark</button>
 </div>
 
+<div class="masthead">
+    <a class="wordmark" href="{{ url_for('public.latest_edition') }}">MuckScraper</a>
+    <div class="tagline">Full Archive</div>
+</div>
+
 <div class="main">
-    <h1>Full Archive</h1>
-    <p class="sub">Every published edition, newest first.</p>
+    <h1>Every Published Edition</h1>
+    <p class="sub">Newest first.</p>
 
     {% if grouped_editions %}
         {% for day, editions in grouped_editions %}

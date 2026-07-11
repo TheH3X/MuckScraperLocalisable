@@ -12,43 +12,44 @@
     <title>{{ edition.edition_type|capitalize }} Edition — {{ edition.date.strftime('%B %d, %Y') }} — MuckScraper</title>
     <style>
         :root {
-            --bg:            #f4f5f9;
-            --surface:       #ffffff;
-            --text:          #16161f;
-            --text-muted:    #565a70;
-            --text-faint:    #8b8fa3;
-            --border:        #e8e9f2;
-            --shadow:        0 10px 30px rgba(31, 20, 80, 0.08);
-            --chip-bg:       #f0f1fa;
+            --paper:      #fbf9f4;
+            --surface:    #ffffff;
+            --text:       #1c1a17;
+            --text-muted: #5c574e;
+            --text-faint: #928c7f;
+            --rule:       #ddd6c8;
+            --shadow:     0 8px 24px rgba(40, 30, 10, 0.06);
+            --chip-bg:    #f2efe4;
 
-            --leftish:  #2563eb;
-            --center:   #64748b;
-            --rightish: #dc2626;
-            --unrated:  #cbd5e1;
+            --left:         #1a56c4;
+            --center-left:  #3b82c9;
+            --center:       #6b7280;
+            --center-right: #e0793f;
+            --right:        #dc2626;
+            --unrated:      #b7b2a5;
 
-            --morning:   #f59e0b;
-            --afternoon: #fb7185;
-            --evening:   #6366f1;
-            --night:     #7c3aed;
+            --top-story:  #b45309;
+            --developing: #0e7490;
+            --in-brief:   #6d28d9;
         }
 
         [data-theme="dark"] {
-            --bg:            #12111c;
-            --surface:       #1b1a29;
-            --text:          #f0f1fa;
-            --text-muted:    #b3b5cc;
-            --text-faint:    #7d80a0;
-            --border:        #2c2b3f;
-            --shadow:        0 10px 30px rgba(0,0,0,0.4);
-            --chip-bg:       #232236;
-            --unrated:  #45475e;
+            --paper:      #17140f;
+            --surface:    #1f1b15;
+            --text:       #f3efe6;
+            --text-muted: #c2bbaa;
+            --text-faint: #8f8776;
+            --rule:       #3a3427;
+            --shadow:     0 8px 24px rgba(0, 0, 0, 0.4);
+            --chip-bg:    #2a251c;
+            --unrated:    #57503f;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
 
         body {
             font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-            background: var(--bg);
+            background: var(--paper);
             color: var(--text);
             transition: background 0.2s, color 0.2s;
             -webkit-font-smoothing: antialiased;
@@ -56,344 +57,352 @@
 
         a { color: inherit; }
 
-        /* ── Top bar ── */
-        .topbar {
-            background: linear-gradient(120deg, #4c1d95 0%, #7c3aed 45%, #db2777 100%);
-            padding: 16px 32px;
+        .headline-font {
+            font-family: Georgia, "Times New Roman", "Noto Serif", serif;
+        }
+
+        /* ── Utility bar ── */
+        .utility-bar {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            position: sticky;
-            top: 0;
-            z-index: 100;
-            box-shadow: 0 4px 20px rgba(76, 29, 149, 0.25);
-        }
-
-        .topbar-left { display: flex; align-items: center; gap: 20px; }
-        .brand { color: #fff; font-size: 20px; font-weight: 900; letter-spacing: -0.5px; text-decoration: none; }
-        .topbar a.nav-link { color: rgba(255,255,255,0.9); font-size: 13px; font-weight: 700; text-decoration: none; }
-        .topbar a.nav-link:hover { color: #fff; text-decoration: underline; }
-
-        .theme-toggle {
-            background: rgba(255,255,255,0.15);
-            border: 1px solid rgba(255,255,255,0.3);
-            color: #fff;
-            padding: 7px 14px;
-            border-radius: 10px;
-            cursor: pointer;
+            padding: 10px 24px;
+            background: var(--surface);
+            border-bottom: 1px solid var(--rule);
             font-size: 12px;
             font-weight: 700;
         }
-        .theme-toggle:hover { background: rgba(255,255,255,0.25); }
+        .utility-left { display: flex; align-items: center; gap: 18px; }
+        .utility-bar a { text-decoration: none; color: var(--text-muted); }
+        .utility-bar a:hover { color: var(--text); text-decoration: underline; }
 
-        /* ── Hero banner ── */
-        .hero-banner {
-            padding: 56px 32px 40px;
+        .theme-toggle {
+            background: var(--chip-bg);
+            border: 1px solid var(--rule);
+            color: var(--text);
+            padding: 5px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 700;
+        }
+        .theme-toggle:hover { border-color: var(--text-muted); }
+
+        /* ── Masthead ── */
+        .masthead {
             text-align: center;
-            color: #fff;
-            background: linear-gradient(135deg, var(--edition-color-a) 0%, var(--edition-color-b) 100%);
+            padding: 36px 20px 22px;
+            border-bottom: 3px solid transparent;
+            border-image: linear-gradient(90deg, #6d28d9, #db2777, #f59e0b) 1;
         }
 
-        .edition-kicker {
-            display: inline-block;
-            background: rgba(255,255,255,0.22);
-            padding: 6px 16px;
-            border-radius: 999px;
+        .wordmark {
+            font-family: Georgia, "Times New Roman", serif;
+            font-size: 46px;
+            font-weight: 900;
+            letter-spacing: -1px;
+            background: linear-gradient(90deg, #6d28d9, #db2777, #f59e0b);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            text-decoration: none;
+        }
+
+        .edition-line {
             font-size: 12px;
             font-weight: 800;
             text-transform: uppercase;
-            letter-spacing: 1.5px;
-            margin-bottom: 16px;
+            letter-spacing: 2.5px;
+            color: var(--text-muted);
+            margin-top: 10px;
+        }
+        .edition-line .type-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+            vertical-align: middle;
         }
 
-        .hero-banner h1 { font-size: 36px; font-weight: 900; letter-spacing: -1px; margin-bottom: 8px; }
-        .hero-banner .sub { font-size: 15px; font-weight: 600; opacity: 0.92; }
+        .edition-date {
+            font-family: Georgia, "Times New Roman", serif;
+            font-size: 22px;
+            font-weight: 700;
+            margin-top: 6px;
+        }
 
-        /* ── Edition strip nav ── */
+        /* ── Editions strip ── */
         .edition-strip {
             display: flex;
-            gap: 10px;
+            gap: 8px;
             overflow-x: auto;
-            padding: 16px 32px;
+            padding: 14px 24px;
             background: var(--surface);
-            border-bottom: 1px solid var(--border);
+            border-bottom: 1px solid var(--rule);
             scrollbar-width: thin;
         }
-
         .edition-chip {
             flex-shrink: 0;
-            padding: 8px 16px;
+            padding: 6px 14px;
             border-radius: 999px;
             background: var(--chip-bg);
             color: var(--text-muted);
-            font-size: 12px;
+            font-size: 11px;
             font-weight: 700;
             text-decoration: none;
-            border: 1px solid var(--border);
+            border: 1px solid var(--rule);
             white-space: nowrap;
         }
-        .edition-chip:hover { border-color: #7c3aed; color: #7c3aed; }
-        .edition-chip.active { background: #7c3aed; color: #fff; border-color: #7c3aed; }
+        .edition-chip:hover { border-color: #6d28d9; color: #6d28d9; }
+        .edition-chip.active { background: #6d28d9; color: #fff; border-color: #6d28d9; }
         .edition-chip.archive-link { margin-left: auto; font-weight: 800; }
 
-        /* ── Main ── */
-        .main { max-width: 1080px; margin: 0 auto; padding: 32px 24px 80px; }
-
-        .legend {
+        /* ── Tag key ── */
+        .tag-key {
+            text-align: center;
+            padding: 10px 24px;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-faint);
+            border-bottom: 1px solid var(--rule);
             display: flex;
             align-items: center;
-            gap: 14px;
+            justify-content: center;
+            gap: 18px;
             flex-wrap: wrap;
-            font-size: 12px;
+        }
+        .tag-key-item { display: inline-flex; align-items: center; gap: 6px; }
+        .source-flag {
+            font-size: 9px;
+            font-weight: 900;
+            padding: 1px 5px;
+            border-radius: 3px;
+            color: #fff;
+        }
+        .source-flag.as { background: #15803d; }
+        .source-flag.ai { background: #6d28d9; }
+
+        /* ── Content column ── */
+        .content-column {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 8px 24px 40px;
+        }
+
+        .page-info-top {
+            text-align: center;
+            font-size: 11px;
             font-weight: 700;
             color: var(--text-faint);
-            margin-bottom: 28px;
-        }
-        .legend-chip { display: inline-flex; align-items: center; gap: 6px; }
-        .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
-
-        /* ── Hero story card ── */
-        .hero-story {
-            background: var(--surface);
-            border-radius: 24px;
-            overflow: hidden;
-            box-shadow: var(--shadow);
-            border: 1px solid var(--border);
-            margin-bottom: 36px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 18px 0 6px;
         }
 
-        .hero-story-image {
-            width: 100%;
-            height: 340px;
-            background: linear-gradient(135deg, #7c3aed 0%, #db2777 100%);
-            position: relative;
-            overflow: hidden;
+        .story-article {
+            padding: 30px 0;
+            border-bottom: 1px solid var(--rule);
         }
-        .hero-story-image img { width: 100%; height: 100%; object-fit: cover; }
-        .hero-story-image .placeholder {
-            width: 100%; height: 100%;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 64px; color: rgba(255,255,255,0.85);
+        .story-article:first-of-type { padding-top: 22px; }
+
+        .story-kicker-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 10px;
         }
 
-        .rank-badge {
-            position: absolute;
-            top: 16px;
-            left: 16px;
-            background: #f59e0b;
-            color: #16161f;
-            font-size: 11px;
+        .kicker {
+            font-size: 10px;
             font-weight: 900;
             text-transform: uppercase;
             letter-spacing: 1px;
-            padding: 6px 14px;
-            border-radius: 999px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-        }
-
-        .updates-badge {
-            position: absolute;
-            top: 16px;
-            right: 16px;
-            background: #059669;
+            padding: 3px 10px;
+            border-radius: 4px;
             color: #fff;
-            font-size: 11px;
+        }
+        .kicker.top-story  { background: var(--top-story); }
+        .kicker.developing { background: var(--developing); }
+        .kicker.in-brief   { background: var(--in-brief); }
+
+        .updates-flag {
+            font-size: 10px;
             font-weight: 900;
             text-transform: uppercase;
-            letter-spacing: 0.6px;
-            padding: 6px 14px;
-            border-radius: 999px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-        }
-
-        .hero-story-body { padding: 32px; }
-
-        .hero-story h2 { font-size: 30px; font-weight: 900; line-height: 1.25; letter-spacing: -0.5px; margin-bottom: 14px; }
-        .hero-story h2 a { text-decoration: none; }
-        .hero-story h2 a:hover { color: #7c3aed; }
-
-        .story-summary { font-size: 15px; line-height: 1.65; color: var(--text-muted); margin-bottom: 20px; }
-
-        .story-meta-row {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            flex-wrap: wrap;
-            font-size: 12px;
-            font-weight: 700;
-            color: var(--text-faint);
-            margin-bottom: 18px;
-        }
-
-        .topic-chip {
-            display: inline-block;
+            letter-spacing: 0.5px;
             padding: 3px 10px;
-            border-radius: 999px;
-            font-size: 11px;
-            font-weight: 800;
+            border-radius: 4px;
+            background: #15803d;
             color: #fff;
-            text-transform: uppercase;
-            letter-spacing: 0.4px;
         }
 
-        /* ── Balance bar ── */
-        .bias-bar {
+        .story-meta {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-faint);
+        }
+
+        .story-headline {
+            font-size: 28px;
+            font-weight: 700;
+            line-height: 1.28;
+            margin-bottom: 14px;
+            letter-spacing: -0.3px;
+        }
+        .story-article.in-brief .story-headline { font-size: 19px; margin-bottom: 8px; }
+        .story-article.developing .story-headline { font-size: 22px; }
+
+        .story-headline a { text-decoration: none; }
+        .story-headline a:hover { color: #6d28d9; }
+
+        .story-photo-wrap { margin-bottom: 6px; }
+        .story-photo-wrap img {
+            width: 100%;
+            border-radius: 6px;
+            display: block;
+        }
+        .story-article.top-story .story-photo-wrap img { max-height: 380px; object-fit: cover; }
+        .story-article.developing .story-photo-wrap img { max-height: 260px; object-fit: cover; }
+
+        .photo-credit {
+            font-size: 11px;
+            font-style: italic;
+            color: var(--text-faint);
+            margin-bottom: 16px;
+        }
+
+        .bias-balance-rule {
             display: flex;
-            height: 8px;
+            height: 4px;
             border-radius: 999px;
             overflow: hidden;
             background: var(--chip-bg);
-            margin-bottom: 18px;
+            margin-bottom: 16px;
         }
-        .bias-seg.leftish  { background: var(--leftish); }
+        .bias-seg.leftish  { background: var(--left); }
         .bias-seg.center   { background: var(--center); }
-        .bias-seg.rightish { background: var(--rightish); }
+        .bias-seg.rightish { background: var(--right); }
         .bias-seg.unrated  { background: var(--unrated); }
 
-        .outlet-badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 22px; }
+        .story-summary {
+            font-family: Georgia, "Times New Roman", serif;
+            font-size: 16px;
+            line-height: 1.72;
+            color: var(--text);
+            margin-bottom: 16px;
+        }
+        .story-article.in-brief .story-summary { font-size: 14.5px; color: var(--text-muted); }
 
-        .outlet-badge {
+        .view-coverage-link {
+            font-size: 13px;
+            font-weight: 700;
+            color: #6d28d9;
+            text-decoration: none;
+        }
+        .view-coverage-link:hover { text-decoration: underline; }
+
+        .outlet-tag-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 4px;
+            margin-bottom: 14px;
+        }
+
+        .outlet-tag {
             display: inline-flex;
             align-items: center;
             gap: 6px;
-            padding: 5px 10px;
-            border-radius: 999px;
-            background: var(--chip-bg);
             font-size: 12px;
             font-weight: 700;
+            padding: 4px 10px;
+            border-radius: 4px;
+            background: var(--chip-bg);
             color: var(--text);
         }
 
-        .bias-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-        .bias-dot.leftish  { background: var(--leftish); }
-        .bias-dot.center   { background: var(--center); }
-        .bias-dot.rightish { background: var(--rightish); }
-        .bias-dot.unrated  { background: var(--unrated); }
-
-        .btn-read {
-            display: inline-block;
-            background: linear-gradient(120deg, #7c3aed, #db2777);
-            color: #fff;
-            font-size: 13px;
-            font-weight: 800;
-            letter-spacing: 0.4px;
-            padding: 12px 24px;
-            border-radius: 12px;
-            text-decoration: none;
-            box-shadow: 0 6px 16px rgba(124, 58, 237, 0.3);
-        }
-        .btn-read:hover { transform: translateY(-1px); }
-
-        /* ── Story grid ── */
-        .story-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 24px;
-        }
-
-        .story-card {
-            background: var(--surface);
-            border-radius: 18px;
-            overflow: hidden;
-            box-shadow: var(--shadow);
-            border: 1px solid var(--border);
-            display: flex;
-            flex-direction: column;
-            transition: transform 0.15s ease;
-        }
-        .story-card:hover { transform: translateY(-3px); }
-
-        .story-card-image {
-            width: 100%;
-            height: 160px;
-            background: linear-gradient(135deg, #0891b2 0%, #7c3aed 100%);
-            position: relative;
-            overflow: hidden;
-        }
-        .story-card-image img { width: 100%; height: 100%; object-fit: cover; }
-        .story-card-image .placeholder {
-            width: 100%; height: 100%;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 36px; color: rgba(255,255,255,0.85);
-        }
-
-        .story-card-rank {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            background: rgba(0,0,0,0.55);
-            color: #fff;
-            font-size: 11px;
-            font-weight: 800;
-            padding: 3px 9px;
-            border-radius: 999px;
-        }
-
-        .story-card-body { padding: 20px; display: flex; flex-direction: column; flex: 1; }
-
-        .story-card h3 { font-size: 17px; font-weight: 800; line-height: 1.35; margin-bottom: 10px; }
-        .story-card h3 a { text-decoration: none; }
-        .story-card h3 a:hover { color: #7c3aed; }
-
-        .story-card .story-summary { font-size: 13px; margin-bottom: 14px; flex: 1; }
-
-        .story-card .bias-bar { height: 6px; margin-bottom: 12px; }
-
-        .story-card-footer {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-            font-size: 11px;
-            font-weight: 700;
-            color: var(--text-faint);
-        }
-
-        .story-card-footer a {
-            color: #7c3aed;
-            text-decoration: none;
-            font-weight: 800;
-        }
-        .story-card-footer a:hover { text-decoration: underline; }
-
-        .card-updates-pill {
-            background: #059669;
-            color: #fff;
+        .bias-pill {
             font-size: 10px;
             font-weight: 800;
+            padding: 2px 7px;
+            border-radius: 3px;
+            color: #fff;
             text-transform: uppercase;
-            letter-spacing: 0.4px;
-            padding: 3px 8px;
-            border-radius: 999px;
+            letter-spacing: 0.3px;
         }
+        .bias-pill.left         { background: var(--left); }
+        .bias-pill.center-left  { background: var(--center-left); }
+        .bias-pill.center       { background: var(--center); }
+        .bias-pill.center-right { background: var(--center-right); }
+        .bias-pill.right        { background: var(--right); }
+
+        .read-more-row { margin-top: 4px; }
+        .btn-read {
+            display: inline-block;
+            background: linear-gradient(120deg, #6d28d9, #db2777);
+            color: #fff;
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0.3px;
+            padding: 9px 18px;
+            border-radius: 8px;
+            text-decoration: none;
+        }
+        .btn-read:hover { opacity: 0.92; }
 
         .empty {
             text-align: center;
-            padding: 100px 0;
+            padding: 80px 0;
             color: var(--text-faint);
             font-style: italic;
         }
 
+        /* ── Pagination ── */
+        .pagination {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            padding: 30px 0 10px;
+        }
+        .page-btn {
+            font-size: 13px;
+            font-weight: 700;
+            padding: 8px 16px;
+            border-radius: 8px;
+            border: 1px solid var(--rule);
+            background: var(--surface);
+            text-decoration: none;
+            color: var(--text);
+        }
+        .page-btn:hover { border-color: #6d28d9; color: #6d28d9; }
+        .page-btn.disabled { opacity: 0.35; pointer-events: none; }
+        .page-info { font-size: 12px; font-weight: 700; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.5px; }
+
+        /* ── Edition pager ── */
         .edition-pager {
             display: flex;
             justify-content: space-between;
             gap: 16px;
-            margin-top: 40px;
+            max-width: 720px;
+            margin: 20px auto 0;
+            padding: 0 24px;
         }
-
         .pager-btn {
             flex: 1;
-            padding: 16px 20px;
-            border-radius: 14px;
+            padding: 14px 18px;
+            border-radius: 10px;
             background: var(--surface);
-            border: 1px solid var(--border);
+            border: 1px solid var(--rule);
             text-decoration: none;
             color: var(--text);
             font-weight: 700;
-            font-size: 13px;
+            font-size: 12px;
             box-shadow: var(--shadow);
         }
-        .pager-btn:hover { border-color: #7c3aed; color: #7c3aed; }
+        .pager-btn:hover { border-color: #6d28d9; color: #6d28d9; }
         .pager-btn.next { text-align: right; }
         .pager-btn.spacer { visibility: hidden; }
 
@@ -404,40 +413,39 @@
             color: var(--text-faint);
         }
 
-        @media (max-width: 800px) {
-            .story-grid { grid-template-columns: 1fr; }
-            .hero-story-image { height: 220px; }
-            .hero-story h2 { font-size: 24px; }
-            .main { padding: 24px 16px 60px; }
-            .topbar { padding: 14px 18px; }
-            .hero-banner { padding: 40px 18px 32px; }
-            .hero-banner h1 { font-size: 26px; }
+        @media (max-width: 620px) {
+            .wordmark { font-size: 34px; }
+            .story-headline { font-size: 22px; }
+            .content-column { padding: 8px 16px 32px; }
+            .utility-bar { padding: 10px 16px; flex-wrap: wrap; gap: 8px; }
         }
     </style>
 </head>
 <body>
 
-<div class="topbar">
-    <div class="topbar-left">
-        <a class="brand" href="{{ url_for('public.latest_edition') }}">MuckScraper</a>
-        <a class="nav-link" href="{{ url_for('public.edition_archive') }}">Full Archive</a>
-        <a class="nav-link" href="{{ url_for('admin.list_articles') }}">Admin Feed</a>
+<div class="utility-bar">
+    <div class="utility-left">
+        <a href="{{ url_for('public.latest_edition') }}"><strong>MuckScraper</strong></a>
+        <a href="{{ url_for('public.edition_archive') }}">Full Archive</a>
+        <a href="{{ url_for('admin.list_articles') }}">Admin Feed</a>
     </div>
     <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙 Dark</button>
 </div>
 
-{% set edition_colors = {
-    'morning':   ('#f59e0b', '#fb7185'),
-    'afternoon': ('#fb7185', '#db2777'),
-    'evening':   ('#6366f1', '#7c3aed'),
-    'night':     ('#312e81', '#7c3aed'),
+{% set edition_dot_colors = {
+    'morning':   '#f59e0b',
+    'afternoon': '#fb7185',
+    'evening':   '#6366f1',
+    'night':     '#7c3aed',
 } %}
-{% set colors = edition_colors.get(edition.edition_type, ('#7c3aed', '#db2777')) %}
 
-<div class="hero-banner" style="--edition-color-a: {{ colors[0] }}; --edition-color-b: {{ colors[1] }};">
-    <span class="edition-kicker">{{ edition.edition_type }} Edition</span>
-    <h1>{{ edition.date.strftime('%A, %B %d, %Y') }}</h1>
-    <div class="sub">{{ stories_with_bias|length }} stories · balanced coverage across the political spectrum</div>
+<div class="masthead">
+    <a class="wordmark" href="{{ url_for('public.latest_edition') }}">MuckScraper</a>
+    <div class="edition-line">
+        <span class="type-dot" style="background: {{ edition_dot_colors.get(edition.edition_type, '#6d28d9') }};"></span>
+        {{ edition.edition_type }} Edition
+    </div>
+    <div class="edition-date">{{ edition.date.strftime('%A, %B %d, %Y') }}</div>
 </div>
 
 <nav class="edition-strip">
@@ -450,143 +458,143 @@
     <a class="edition-chip archive-link" href="{{ url_for('public.edition_archive') }}">Full Archive →</a>
 </nav>
 
-<div class="main">
-    <div class="legend">
-        <span>Bias Key:</span>
-        <span class="legend-chip"><span class="legend-dot" style="background: var(--leftish);"></span> Left-leaning</span>
-        <span class="legend-chip"><span class="legend-dot" style="background: var(--center);"></span> Center</span>
-        <span class="legend-chip"><span class="legend-dot" style="background: var(--rightish);"></span> Right-leaning</span>
-        <span class="legend-chip"><span class="legend-dot" style="background: var(--unrated);"></span> Unrated</span>
-    </div>
+<div class="tag-key">
+    <span>Tag Key:</span>
+    <span class="tag-key-item"><span class="source-flag as">AS</span> Curated Bias Rating</span>
+    <span class="tag-key-item"><span class="source-flag ai">AI</span> AI-Generated Rating</span>
+</div>
 
-    {% if stories_with_bias %}
-        {% for edition_story, story, bias in stories_with_bias %}
+<div class="content-column">
+    {% if total_pages > 1 %}
+    <div class="page-info-top">Page {{ page }} of {{ total_pages }} · {{ total_story_count }} stories</div>
+    {% endif %}
+
+    {% if entries %}
+        {% for entry in entries %}
+            {% set story = entry.story %}
+            {% set edition_story = entry.edition_story %}
+            {% set bias = entry.bias %}
             {% set featured_article = story.articles|selectattr('image_url')|first %}
             {% set image_url = edition_story.source_image_url or (featured_article.image_url if featured_article else None) %}
-            {% set topic = story.topics[0] if story.topics else None %}
 
-            {% if loop.first %}
-            <div class="hero-story">
-                <div class="hero-story-image">
-                    <span class="rank-badge">Top Story</span>
-                    {% if edition_story.has_updates %}<span class="updates-badge">New Updates</span>{% endif %}
-                    {% if image_url %}
-                        <img src="{{ image_url }}" alt="" loading="lazy">
-                    {% else %}
-                        <div class="placeholder">📰</div>
-                    {% endif %}
-                </div>
-                <div class="hero-story-body">
-                    {% if topic %}<span class="topic-chip" style="background: {{ topic.name|topic_color }};">{{ topic.display_label }}</span>{% endif %}
-                    <h2><a href="{{ url_for('public.view_story', story_id=story.id) }}">{{ story.display_headline }}</a></h2>
-
-                    <div class="story-meta-row">
-                        <span>{{ story.unique_outlets|length }} outlet{{ 's' if story.unique_outlets|length != 1 else '' }}</span>
-                        <span>·</span>
-                        <span>{{ story.articles|length }} source article{{ 's' if story.articles|length != 1 else '' }}</span>
+            <article class="story-article {{ entry.kind_class }}">
+                <div class="story-kicker-row">
+                    <span class="kicker {{ entry.kind_class }}">{{ entry.kind_label }}</span>
+                    <span class="story-meta">
+                        {{ story.unique_outlets|length }} Source Outlet{{ 's' if story.unique_outlets|length != 1 else '' }} ·
+                        {{ story.articles|length }} Article{{ 's' if story.articles|length != 1 else '' }}
                         {% if story.last_updated %}
-                        <span>·</span>
-                        <span>Updated <span class="local-date" data-utc="{{ story.last_updated.isoformat() }}Z">{{ story.last_updated.strftime('%b %d, %H:%M') }}</span></span>
+                            · Last Updated:
+                            <span class="local-date" data-utc="{{ story.last_updated.isoformat() }}Z">{{ story.last_updated.strftime('%b %d, %Y %H:%M') }}</span>
                         {% endif %}
-                    </div>
+                    </span>
+                    {% if edition_story.has_updates %}<span class="updates-flag">New Updates</span>{% endif %}
+                </div>
 
-                    {% if bias.counts.leftish or bias.counts.rightish or bias.counts.center %}
-                    <div class="bias-bar">
-                        {% if bias.percents.leftish %}<span class="bias-seg leftish" style="width:{{ bias.percents.leftish }}%"></span>{% endif %}
-                        {% if bias.percents.center %}<span class="bias-seg center" style="width:{{ bias.percents.center }}%"></span>{% endif %}
-                        {% if bias.percents.rightish %}<span class="bias-seg rightish" style="width:{{ bias.percents.rightish }}%"></span>{% endif %}
-                        {% if bias.percents.unrated %}<span class="bias-seg unrated" style="width:{{ bias.percents.unrated }}%"></span>{% endif %}
+                <h2 class="story-headline headline-font">
+                    <a href="{{ url_for('public.view_story', story_id=story.id) }}">{{ story.display_headline }}</a>
+                </h2>
+
+                {% if image_url and entry.kind_class != 'in-brief' %}
+                    <div class="story-photo-wrap">
+                        <img src="{{ image_url }}" alt="" loading="lazy">
                     </div>
+                    {% if featured_article and featured_article.outlet %}
+                        <div class="photo-credit">Photo: {{ featured_article.outlet.name }}</div>
                     {% endif %}
+                {% endif %}
 
+                {% if bias.counts.leftish or bias.counts.rightish or bias.counts.center %}
+                <div class="bias-balance-rule">
+                    {% if bias.percents.leftish %}<span class="bias-seg leftish" style="width:{{ bias.percents.leftish }}%"></span>{% endif %}
+                    {% if bias.percents.center %}<span class="bias-seg center" style="width:{{ bias.percents.center }}%"></span>{% endif %}
+                    {% if bias.percents.rightish %}<span class="bias-seg rightish" style="width:{{ bias.percents.rightish }}%"></span>{% endif %}
+                    {% if bias.percents.unrated %}<span class="bias-seg unrated" style="width:{{ bias.percents.unrated }}%"></span>{% endif %}
+                </div>
+                {% endif %}
+
+                {% if entry.kind_class == 'in-brief' %}
+                    <p class="story-summary">{{ (story.summary or story.title)|truncate(180) }}</p>
+                    <div class="outlet-tag-row">
+                        {% for outlet in story.unique_outlets[:4] %}
+                            <span class="outlet-tag">
+                                {{ outlet.name }}
+                                {% if outlet.bias_score is not none %}
+                                    {% set bucket = outlet.bias_score|round|int %}
+                                    <span class="bias-pill {{ 'left' if bucket == 1 else 'center-left' if bucket == 2 else 'center-right' if bucket == 4 else 'right' if bucket >= 5 else 'center' }}">{{ outlet.bias_score|bias_short_label }}</span>
+                                    <span class="source-flag {{ 'as' if outlet.bias_source == 'static' else 'ai' }}">{{ 'AS' if outlet.bias_source == 'static' else 'AI' }}</span>
+                                {% endif %}
+                            </span>
+                        {% endfor %}
+                    </div>
+                    <a class="view-coverage-link" href="{{ url_for('public.view_story', story_id=story.id) }}">View Full Coverage →</a>
+                {% else %}
                     {% if story.summary %}
-                        <p class="story-summary">{{ story.summary|truncate(360) }}</p>
+                        <p class="story-summary">{{ story.summary|truncate(420) }}</p>
                     {% elif story.title %}
                         <p class="story-summary">{{ story.title }}</p>
                     {% endif %}
 
-                    <div class="outlet-badges">
+                    <div class="outlet-tag-row">
                         {% for outlet in story.unique_outlets[:6] %}
-                            <span class="outlet-badge">
-                                <span class="bias-dot {{ 'leftish' if outlet.bias_score and outlet.bias_score <= 2 else 'rightish' if outlet.bias_score and outlet.bias_score >= 4 else 'center' if outlet.bias_score else 'unrated' }}"></span>
+                            <span class="outlet-tag">
                                 {{ outlet.name }}
+                                {% if outlet.bias_score is not none %}
+                                    {% set bucket = outlet.bias_score|round|int %}
+                                    <span class="bias-pill {{ 'left' if bucket == 1 else 'center-left' if bucket == 2 else 'center-right' if bucket == 4 else 'right' if bucket >= 5 else 'center' }}">{{ outlet.bias_score|bias_short_label }}</span>
+                                    <span class="source-flag {{ 'as' if outlet.bias_source == 'static' else 'ai' }}">{{ 'AS' if outlet.bias_source == 'static' else 'AI' }}</span>
+                                {% endif %}
                             </span>
                         {% endfor %}
                     </div>
 
-                    <a class="btn-read" href="{{ url_for('public.view_story', story_id=story.id) }}">Read Full Coverage →</a>
-                </div>
-            </div>
-            {% endif %}
-        {% endfor %}
-
-        <div class="story-grid">
-            {% for edition_story, story, bias in stories_with_bias %}
-                {% if not loop.first %}
-                    {% set featured_article = story.articles|selectattr('image_url')|first %}
-                    {% set image_url = edition_story.source_image_url or (featured_article.image_url if featured_article else None) %}
-                    {% set topic = story.topics[0] if story.topics else None %}
-
-                    <div class="story-card">
-                        <div class="story-card-image">
-                            <span class="story-card-rank">#{{ loop.index }}</span>
-                            {% if image_url %}
-                                <img src="{{ image_url }}" alt="" loading="lazy">
-                            {% else %}
-                                <div class="placeholder">📰</div>
-                            {% endif %}
-                        </div>
-                        <div class="story-card-body">
-                            {% if topic %}<span class="topic-chip" style="background: {{ topic.name|topic_color }}; margin-bottom: 10px; display: inline-block; width: fit-content;">{{ topic.display_label }}</span>{% endif %}
-                            <h3><a href="{{ url_for('public.view_story', story_id=story.id) }}">{{ story.display_headline }}</a></h3>
-
-                            {% if bias.counts.leftish or bias.counts.rightish or bias.counts.center %}
-                            <div class="bias-bar">
-                                {% if bias.percents.leftish %}<span class="bias-seg leftish" style="width:{{ bias.percents.leftish }}%"></span>{% endif %}
-                                {% if bias.percents.center %}<span class="bias-seg center" style="width:{{ bias.percents.center }}%"></span>{% endif %}
-                                {% if bias.percents.rightish %}<span class="bias-seg rightish" style="width:{{ bias.percents.rightish }}%"></span>{% endif %}
-                                {% if bias.percents.unrated %}<span class="bias-seg unrated" style="width:{{ bias.percents.unrated }}%"></span>{% endif %}
-                            </div>
-                            {% endif %}
-
-                            {% if story.summary %}
-                                <p class="story-summary">{{ story.summary|truncate(140) }}</p>
-                            {% else %}
-                                <p class="story-summary">{{ story.title|truncate(140) }}</p>
-                            {% endif %}
-
-                            <div class="story-card-footer">
-                                <span>{{ story.unique_outlets|length }} outlet{{ 's' if story.unique_outlets|length != 1 else '' }} · {{ story.articles|length }} article{{ 's' if story.articles|length != 1 else '' }}</span>
-                                {% if edition_story.has_updates %}<span class="card-updates-pill">New</span>{% endif %}
-                            </div>
-                        </div>
+                    <div class="read-more-row">
+                        <a class="btn-read" href="{{ url_for('public.view_story', story_id=story.id) }}">Read Full Coverage →</a>
                     </div>
                 {% endif %}
-            {% endfor %}
-        </div>
+            </article>
+        {% endfor %}
     {% else %}
         <div class="empty">
             <p>This edition has no stories yet.</p>
         </div>
     {% endif %}
 
-    <div class="edition-pager">
-        {% if prev_edition %}
-            <a class="pager-btn prev" href="{{ url_for('public.view_edition', edition_date=prev_edition.date.isoformat(), edition_type=prev_edition.edition_type) }}">
-                ← {{ prev_edition.date.strftime('%b %d') }} {{ prev_edition.edition_type|capitalize }}
-            </a>
+    {% if total_pages > 1 %}
+    <div class="pagination">
+        {% if page > 1 %}
+            <a class="page-btn" href="{{ url_for('public.view_edition', edition_date=edition.date.isoformat(), edition_type=edition.edition_type, page=page-1) }}">← Previous</a>
         {% else %}
-            <span class="pager-btn spacer"></span>
+            <span class="page-btn disabled">← Previous</span>
         {% endif %}
 
-        {% if next_edition %}
-            <a class="pager-btn next" href="{{ url_for('public.view_edition', edition_date=next_edition.date.isoformat(), edition_type=next_edition.edition_type) }}">
-                {{ next_edition.date.strftime('%b %d') }} {{ next_edition.edition_type|capitalize }} →
-            </a>
+        <span class="page-info">Page {{ page }} of {{ total_pages }}</span>
+
+        {% if page < total_pages %}
+            <a class="page-btn" href="{{ url_for('public.view_edition', edition_date=edition.date.isoformat(), edition_type=edition.edition_type, page=page+1) }}">Next →</a>
         {% else %}
-            <span class="pager-btn spacer"></span>
+            <span class="page-btn disabled">Next →</span>
         {% endif %}
     </div>
+    {% endif %}
+</div>
+
+<div class="edition-pager">
+    {% if prev_edition %}
+        <a class="pager-btn prev" href="{{ url_for('public.view_edition', edition_date=prev_edition.date.isoformat(), edition_type=prev_edition.edition_type) }}">
+            ← {{ prev_edition.date.strftime('%b %d') }} {{ prev_edition.edition_type|capitalize }}
+        </a>
+    {% else %}
+        <span class="pager-btn spacer"></span>
+    {% endif %}
+
+    {% if next_edition %}
+        <a class="pager-btn next" href="{{ url_for('public.view_edition', edition_date=next_edition.date.isoformat(), edition_type=next_edition.edition_type) }}">
+            {{ next_edition.date.strftime('%b %d') }} {{ next_edition.edition_type|capitalize }} →
+        </a>
+    {% else %}
+        <span class="pager-btn spacer"></span>
+    {% endif %}
 </div>
 
 <footer class="site-footer">MuckScraper — self-hosted, balanced news editions.</footer>

@@ -76,6 +76,17 @@ def register_filters(app):
             pass
         return summary.strip()
 
+    @app.template_filter("bias_short_label")
+    def bias_short_label(score):
+        """Compact bias label for magazine-style outlet tags (e.g. 'Center-Left')."""
+        if score is None:
+            return ""
+        bucket = int(round(score))
+        if bucket < 1: bucket = 1
+        if bucket > 5: bucket = 5
+        labels = {1: "Left", 2: "Center-Left", 3: "Center", 4: "Center-Right", 5: "Right"}
+        return labels[bucket]
+
     @app.template_filter("topic_color")
     def topic_color(name):
         """Pick a stable vivid color for a topic chip based on its name."""

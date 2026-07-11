@@ -46,6 +46,7 @@ def aggregator_headlines():
 
 
 EDITION_TYPE_ORDER = {"morning": 0, "afternoon": 1, "evening": 2, "night": 3}
+EDITION_PAGE_SIZE = 5
 
 
 def _published_editions_query():
@@ -54,6 +55,15 @@ def _published_editions_query():
 
 def _edition_sort_key(edition):
     return (edition.date, EDITION_TYPE_ORDER.get(edition.edition_type, 99))
+
+
+def _story_kind(rank, story, edition_story):
+    """Classify a ranked story the way a print edition would label it."""
+    if rank == 1:
+        return "top-story", "Top Story"
+    if edition_story.has_updates or len(story.articles) >= 3:
+        return "developing", "Developing"
+    return "in-brief", "In Brief"
 
 
 @public.route("/editions/latest")
@@ -98,13 +108,26 @@ def view_edition(edition_date, edition_type):
         abort(404)
 
     edition_stories = edition.edition_stories.order_by(EditionStory.rank).all()
-    stories_with_bias = []
-    for edition_story in edition_stories:
+    entries = []
+    for rank, edition_story in enumerate(edition_stories, start=1):
         story = edition_story.story
         if not story:
             continue
         apply_aggregator_filter(story)
-        stories_with_bias.append((edition_story, story, compute_bias_breakdown(story)))
+        kind_class, kind_label = _story_kind(rank, story, edition_story)
+        entries.append({
+            "rank": rank,
+            "edition_story": edition_story,
+            "story": story,
+            "bias": compute_bias_breakdown(story),
+            "kind_class": kind_class,
+            "kind_label": kind_label,
+        })
+
+    total_pages = max(1, (len(entries) + EDITION_PAGE_SIZE - 1) // EDITION_PAGE_SIZE)
+    page = request.args.get("page", 1, type=int) or 1
+    page = min(max(page, 1), total_pages)
+    page_entries = entries[(page - 1) * EDITION_PAGE_SIZE : page * EDITION_PAGE_SIZE]
 
     all_published = sorted(_published_editions_query().all(), key=_edition_sort_key)
     current_index = next(
@@ -124,7 +147,10 @@ def view_edition(edition_date, edition_type):
     return render_template(
         "edition.html",
         edition=edition,
-        stories_with_bias=stories_with_bias,
+        entries=page_entries,
+        total_story_count=len(entries),
+        page=page,
+        total_pages=total_pages,
         recent_editions=recent_editions,
         prev_edition=prev_edition,
         next_edition=next_edition,
