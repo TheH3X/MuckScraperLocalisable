@@ -12,37 +12,39 @@
     <title>{{ edition.edition_type|capitalize }} Edition — {{ edition.date.strftime('%B %d, %Y') }} — MuckScraper</title>
     <style>
         :root {
-            --paper:      #fbf9f4;
+            --paper:      #fafaf8;
             --surface:    #ffffff;
-            --text:       #1c1a17;
-            --text-muted: #5c574e;
-            --text-faint: #928c7f;
-            --rule:       #ddd6c8;
-            --shadow:     0 8px 24px rgba(40, 30, 10, 0.06);
-            --chip-bg:    #f2efe4;
+            --text:       #1a1a1a;
+            --text-muted: #57534e;
+            --text-faint: #8a8681;
+            --rule:       #e2e0da;
+            --rule-strong:#1a1a1a;
+            --shadow:     0 6px 18px rgba(0, 0, 0, 0.05);
+            --chip-bg:    #f0eee8;
+            --accent:     #1f2d3d;
+            --accent-soft:#eef1f4;
 
-            --left:         #1a56c4;
-            --center-left:  #3b82c9;
-            --center:       #6b7280;
-            --center-right: #e0793f;
-            --right:        #dc2626;
-            --unrated:      #b7b2a5;
-
-            --top-story:  #b45309;
-            --developing: #0e7490;
-            --in-brief:   #6d28d9;
+            --left:         #4a6fa1;
+            --center-left:  #7c9bc2;
+            --center:       #8a8a86;
+            --center-right: #c98858;
+            --right:        #a8493f;
+            --unrated:      #c4c0b8;
         }
 
         [data-theme="dark"] {
-            --paper:      #17140f;
-            --surface:    #1f1b15;
-            --text:       #f3efe6;
-            --text-muted: #c2bbaa;
-            --text-faint: #8f8776;
-            --rule:       #3a3427;
-            --shadow:     0 8px 24px rgba(0, 0, 0, 0.4);
-            --chip-bg:    #2a251c;
-            --unrated:    #57503f;
+            --paper:      #141312;
+            --surface:    #1c1b19;
+            --text:       #ece9e3;
+            --text-muted: #b3aea3;
+            --text-faint: #837e75;
+            --rule:       #322f2a;
+            --rule-strong:#ece9e3;
+            --shadow:     0 6px 18px rgba(0, 0, 0, 0.4);
+            --chip-bg:    #262420;
+            --accent:     #c9d3dd;
+            --accent-soft:#232a30;
+            --unrated:    #4a4640;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -66,11 +68,11 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 10px 24px;
+            padding: 9px 24px;
             background: var(--surface);
             border-bottom: 1px solid var(--rule);
             font-size: 12px;
-            font-weight: 700;
+            font-weight: 600;
         }
         .utility-left { display: flex; align-items: center; gap: 18px; }
         .utility-bar a { text-decoration: none; color: var(--text-muted); }
@@ -81,119 +83,153 @@
             border: 1px solid var(--rule);
             color: var(--text);
             padding: 5px 12px;
-            border-radius: 8px;
+            border-radius: 6px;
             cursor: pointer;
             font-size: 11px;
-            font-weight: 700;
+            font-weight: 600;
         }
         .theme-toggle:hover { border-color: var(--text-muted); }
 
         /* ── Masthead ── */
         .masthead {
             text-align: center;
-            padding: 36px 20px 22px;
-            border-bottom: 3px solid transparent;
-            border-image: linear-gradient(90deg, #6d28d9, #db2777, #f59e0b) 1;
+            padding: 34px 20px 18px;
         }
 
         .wordmark {
             font-family: Georgia, "Times New Roman", serif;
-            font-size: 46px;
-            font-weight: 900;
-            letter-spacing: -1px;
-            background: linear-gradient(90deg, #6d28d9, #db2777, #f59e0b);
-            -webkit-background-clip: text;
-            background-clip: text;
-            color: transparent;
+            font-size: 42px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            color: var(--text);
             text-decoration: none;
         }
 
         .edition-line {
-            font-size: 12px;
-            font-weight: 800;
+            font-size: 11px;
+            font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 2.5px;
             color: var(--text-muted);
-            margin-top: 10px;
-        }
-        .edition-line .type-dot {
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            margin-right: 6px;
-            vertical-align: middle;
+            margin-top: 12px;
         }
 
         .edition-date {
             font-family: Georgia, "Times New Roman", serif;
-            font-size: 22px;
+            font-size: 20px;
             font-weight: 700;
-            margin-top: 6px;
+            margin-top: 4px;
         }
 
-        /* ── Editions strip ── */
-        .edition-strip {
-            display: flex;
-            gap: 8px;
-            overflow-x: auto;
-            padding: 14px 24px;
-            background: var(--surface);
-            border-bottom: 1px solid var(--rule);
-            scrollbar-width: thin;
-        }
-        .edition-chip {
-            flex-shrink: 0;
-            padding: 6px 14px;
-            border-radius: 999px;
-            background: var(--chip-bg);
-            color: var(--text-muted);
-            font-size: 11px;
-            font-weight: 700;
-            text-decoration: none;
-            border: 1px solid var(--rule);
-            white-space: nowrap;
-        }
-        .edition-chip:hover { border-color: #6d28d9; color: #6d28d9; }
-        .edition-chip.active { background: #6d28d9; color: #fff; border-color: #6d28d9; }
-        .edition-chip.archive-link { margin-left: auto; font-weight: 800; }
-
-        /* ── Tag key ── */
-        .tag-key {
-            text-align: center;
-            padding: 10px 24px;
+        .edition-page-of {
             font-size: 11px;
             font-weight: 600;
             color: var(--text-faint);
-            border-bottom: 1px solid var(--rule);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 18px;
-            flex-wrap: wrap;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-top: 6px;
         }
-        .tag-key-item { display: inline-flex; align-items: center; gap: 6px; }
+
+        .masthead-rule {
+            border: none;
+            border-top: 3px double var(--rule-strong);
+            max-width: 1040px;
+            margin: 16px auto 0;
+        }
+
         .source-flag {
             font-size: 9px;
-            font-weight: 900;
+            font-weight: 700;
             padding: 1px 5px;
             border-radius: 3px;
-            color: #fff;
+            border: 1px solid var(--rule);
+            color: var(--text-muted);
         }
-        .source-flag.as { background: #15803d; }
-        .source-flag.ai { background: #6d28d9; }
 
-        /* ── Content column ── */
-        .content-column {
-            max-width: 720px;
+        /* ── Page shell: sidebar + main column ── */
+        .page-shell {
+            max-width: 1040px;
             margin: 0 auto;
-            padding: 8px 24px 40px;
+            padding: 24px 24px 40px;
+            display: flex;
+            gap: 48px;
+            align-items: flex-start;
+        }
+
+        .sidebar {
+            width: 240px;
+            flex-shrink: 0;
+        }
+
+        .main-column {
+            flex: 1;
+            max-width: 700px;
+            min-width: 0;
+        }
+
+        .sidebar-section { margin-bottom: 26px; }
+        .sidebar-heading {
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: var(--text-faint);
+            margin-bottom: 10px;
+            padding-bottom: 7px;
+            border-bottom: 1px solid var(--rule);
+        }
+        .sidebar-day { margin-bottom: 10px; }
+        .sidebar-day-label {
+            font-size: 11px;
+            font-weight: 700;
+            color: var(--text-muted);
+            margin-bottom: 3px;
+        }
+        .sidebar-edition-link {
+            display: block;
+            font-size: 12.5px;
+            padding: 3px 0;
+            color: var(--text);
+            text-decoration: none;
+        }
+        .sidebar-edition-link.active { font-weight: 700; color: var(--accent); }
+        .sidebar-edition-link:hover { color: var(--accent); }
+        .sidebar-archive-link {
+            display: inline-block;
+            margin-top: 8px;
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .sidebar-archive-link:hover { text-decoration: underline; }
+
+        .sidebar-tagkey-item {
+            font-size: 11.5px;
+            color: var(--text-faint);
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            margin-bottom: 7px;
+        }
+
+        .sidebar-about {
+            font-size: 12.5px;
+            color: var(--text-muted);
+            line-height: 1.6;
+        }
+        .sidebar-stats {
+            font-size: 12px;
+            color: var(--text-faint);
+            margin-top: 8px;
+            border-top: 1px solid var(--rule);
+            padding-top: 8px;
         }
 
         .page-info-top {
             text-align: center;
             font-size: 11px;
-            font-weight: 700;
+            font-weight: 600;
             color: var(--text-faint);
             text-transform: uppercase;
             letter-spacing: 1px;
@@ -201,85 +237,112 @@
         }
 
         .story-article {
-            padding: 30px 0;
+            padding: 26px 0;
             border-bottom: 1px solid var(--rule);
         }
-        .story-article:first-of-type { padding-top: 22px; }
+        .story-article:first-of-type { padding-top: 20px; }
+        .story-article.in-brief { padding: 14px 0; }
 
         .story-kicker-row {
             display: flex;
             align-items: center;
             gap: 10px;
             flex-wrap: wrap;
-            margin-bottom: 10px;
+            margin-bottom: 8px;
         }
 
         .kicker {
             font-size: 10px;
-            font-weight: 900;
+            font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 1px;
-            padding: 3px 10px;
-            border-radius: 4px;
-            color: #fff;
         }
-        .kicker.top-story  { background: var(--top-story); }
-        .kicker.developing { background: var(--developing); }
-        .kicker.in-brief   { background: var(--in-brief); }
+        .kicker.top-story {
+            color: var(--surface);
+            background: var(--accent);
+            padding: 3px 9px;
+            border-radius: 3px;
+        }
+        .kicker.developing {
+            color: var(--accent);
+            border: 1px solid var(--accent);
+            padding: 2px 8px;
+            border-radius: 3px;
+        }
+        .kicker.in-brief {
+            color: var(--text-faint);
+            letter-spacing: 1.2px;
+        }
 
         .updates-flag {
             font-size: 10px;
-            font-weight: 900;
+            font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            padding: 3px 10px;
-            border-radius: 4px;
-            background: #15803d;
-            color: #fff;
+            color: var(--text-muted);
         }
+        .updates-flag::before { content: "● "; font-size: 8px; }
 
         .story-meta {
-            font-size: 12px;
-            font-weight: 600;
+            font-size: 11.5px;
+            font-weight: 500;
             color: var(--text-faint);
         }
 
         .story-headline {
-            font-size: 28px;
             font-weight: 700;
-            line-height: 1.28;
-            margin-bottom: 14px;
-            letter-spacing: -0.3px;
+            line-height: 1.25;
+            letter-spacing: -0.2px;
+            margin-bottom: 12px;
         }
-        .story-article.in-brief .story-headline { font-size: 19px; margin-bottom: 8px; }
-        .story-article.developing .story-headline { font-size: 22px; }
+        .story-article.top-story .story-headline   { font-size: 32px; margin-bottom: 14px; }
+        .story-article.developing .story-headline  { font-size: 20px; margin-bottom: 10px; }
+        .story-article.in-brief .story-headline    { font-size: 15px; margin-bottom: 4px; font-weight: 700; }
 
         .story-headline a { text-decoration: none; }
-        .story-headline a:hover { color: #6d28d9; }
+        .story-headline a:hover { color: var(--accent); text-decoration: underline; }
 
         .story-photo-wrap { margin-bottom: 6px; }
         .story-photo-wrap img {
             width: 100%;
-            border-radius: 6px;
             display: block;
         }
-        .story-article.top-story .story-photo-wrap img { max-height: 380px; object-fit: cover; }
-        .story-article.developing .story-photo-wrap img { max-height: 260px; object-fit: cover; }
+        .story-article.top-story .story-photo-wrap img { max-height: 420px; object-fit: cover; }
 
         .photo-credit {
             font-size: 11px;
             font-style: italic;
             color: var(--text-faint);
-            margin-bottom: 16px;
+            margin-bottom: 14px;
+        }
+
+        /* Developing stories use the extra horizontal room: image beside text */
+        .developing-row {
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
+        }
+        .developing-media {
+            flex: 0 0 220px;
+        }
+        .developing-media img {
+            width: 100%;
+            height: 148px;
+            object-fit: cover;
+            display: block;
+        }
+        .developing-media .photo-credit { margin-top: 5px; margin-bottom: 0; }
+        .developing-body {
+            flex: 1;
+            min-width: 0;
         }
 
         .bias-balance-rule {
             display: flex;
-            height: 4px;
-            border-radius: 999px;
+            height: 3px;
             overflow: hidden;
             background: var(--chip-bg);
-            margin-bottom: 16px;
+            margin-bottom: 14px;
         }
         .bias-seg.leftish  { background: var(--left); }
         .bias-seg.center   { background: var(--center); }
@@ -288,17 +351,20 @@
 
         .story-summary {
             font-family: Georgia, "Times New Roman", serif;
-            font-size: 16px;
-            line-height: 1.72;
+            line-height: 1.6;
             color: var(--text);
-            margin-bottom: 16px;
         }
-        .story-article.in-brief .story-summary { font-size: 14.5px; color: var(--text-muted); }
+        .story-article.top-story .story-summary  { font-size: 16.5px; margin-bottom: 16px; }
+        .story-article.developing .story-summary { font-size: 14.5px; color: var(--text-muted); margin-bottom: 12px; }
+        .story-article.in-brief .story-summary   { font-size: 13px; color: var(--text-muted); line-height: 1.5; margin-bottom: 2px; }
 
+        .brief-coverage-line {
+            font-size: 12px;
+            color: var(--text-faint);
+        }
         .view-coverage-link {
-            font-size: 13px;
             font-weight: 700;
-            color: #6d28d9;
+            color: var(--accent);
             text-decoration: none;
         }
         .view-coverage-link:hover { text-decoration: underline; }
@@ -306,28 +372,28 @@
         .outlet-tag-row {
             display: flex;
             flex-wrap: wrap;
-            gap: 8px;
-            margin-top: 4px;
-            margin-bottom: 14px;
+            gap: 7px;
+            margin-top: 2px;
+            margin-bottom: 12px;
         }
 
         .outlet-tag {
             display: inline-flex;
             align-items: center;
-            gap: 6px;
-            font-size: 12px;
-            font-weight: 700;
-            padding: 4px 10px;
-            border-radius: 4px;
+            gap: 5px;
+            font-size: 11.5px;
+            font-weight: 600;
+            padding: 3px 9px;
+            border-radius: 3px;
             background: var(--chip-bg);
             color: var(--text);
         }
 
         .bias-pill {
-            font-size: 10px;
-            font-weight: 800;
-            padding: 2px 7px;
-            border-radius: 3px;
+            font-size: 9px;
+            font-weight: 700;
+            padding: 1px 6px;
+            border-radius: 2px;
             color: #fff;
             text-transform: uppercase;
             letter-spacing: 0.3px;
@@ -338,19 +404,27 @@
         .bias-pill.center-right { background: var(--center-right); }
         .bias-pill.right        { background: var(--right); }
 
-        .read-more-row { margin-top: 4px; }
+        .read-more-row { margin-top: 2px; }
         .btn-read {
             display: inline-block;
-            background: linear-gradient(120deg, #6d28d9, #db2777);
-            color: #fff;
+            background: var(--accent);
+            color: var(--surface);
             font-size: 12px;
-            font-weight: 800;
-            letter-spacing: 0.3px;
+            font-weight: 700;
+            letter-spacing: 0.2px;
             padding: 9px 18px;
-            border-radius: 8px;
+            border-radius: 4px;
             text-decoration: none;
         }
-        .btn-read:hover { opacity: 0.92; }
+        .btn-read:hover { opacity: 0.85; }
+
+        .link-read {
+            font-size: 12.5px;
+            font-weight: 700;
+            color: var(--accent);
+            text-decoration: none;
+        }
+        .link-read:hover { text-decoration: underline; }
 
         .empty {
             text-align: center;
@@ -364,45 +438,38 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 20px;
-            padding: 30px 0 10px;
+            gap: 22px;
+            padding: 28px 0 8px;
         }
         .page-btn {
-            font-size: 13px;
-            font-weight: 700;
-            padding: 8px 16px;
-            border-radius: 8px;
-            border: 1px solid var(--rule);
-            background: var(--surface);
+            font-size: 12.5px;
+            font-weight: 600;
             text-decoration: none;
             color: var(--text);
         }
-        .page-btn:hover { border-color: #6d28d9; color: #6d28d9; }
+        .page-btn:hover { color: var(--accent); text-decoration: underline; }
         .page-btn.disabled { opacity: 0.35; pointer-events: none; }
-        .page-info { font-size: 12px; font-weight: 700; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.5px; }
+        .page-info { font-size: 11px; font-weight: 700; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.5px; }
 
         /* ── Edition pager ── */
         .edition-pager {
             display: flex;
             justify-content: space-between;
             gap: 16px;
-            max-width: 720px;
-            margin: 20px auto 0;
-            padding: 0 24px;
+            max-width: 700px;
+            margin: 4px auto 0;
+            padding: 16px 24px 0;
+            border-top: 1px solid var(--rule);
         }
         .pager-btn {
             flex: 1;
-            padding: 14px 18px;
-            border-radius: 10px;
-            background: var(--surface);
-            border: 1px solid var(--rule);
+            padding: 10px 0;
             text-decoration: none;
-            color: var(--text);
-            font-weight: 700;
+            color: var(--text-muted);
+            font-weight: 600;
             font-size: 12px;
-            box-shadow: var(--shadow);
         }
-        .pager-btn:hover { border-color: #6d28d9; color: #6d28d9; }
+        .pager-btn:hover { color: var(--accent); }
         .pager-btn.next { text-align: right; }
         .pager-btn.spacer { visibility: hidden; }
 
@@ -413,11 +480,21 @@
             color: var(--text-faint);
         }
 
+        @media (max-width: 860px) {
+            .page-shell { flex-direction: column; padding: 20px 20px 32px; }
+            .sidebar { width: 100%; order: 2; display: flex; flex-wrap: wrap; gap: 32px; }
+            .sidebar-section { flex: 1 1 200px; margin-bottom: 12px; }
+            .main-column { max-width: 100%; order: 1; }
+        }
+
         @media (max-width: 620px) {
-            .wordmark { font-size: 34px; }
-            .story-headline { font-size: 22px; }
-            .content-column { padding: 8px 16px 32px; }
+            .wordmark { font-size: 32px; }
+            .story-article.top-story .story-headline { font-size: 24px; }
+            .page-shell { padding: 4px 16px 32px; }
             .utility-bar { padding: 10px 16px; flex-wrap: wrap; gap: 8px; }
+            .developing-row { flex-direction: column; }
+            .developing-media { flex-basis: auto; width: 100%; }
+            .developing-media img { height: auto; max-height: 220px; }
         }
     </style>
 </head>
@@ -432,43 +509,53 @@
     <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙 Dark</button>
 </div>
 
-{% set edition_dot_colors = {
-    'morning':   '#f59e0b',
-    'afternoon': '#fb7185',
-    'evening':   '#6366f1',
-    'night':     '#7c3aed',
-} %}
-
 <div class="masthead">
     <a class="wordmark" href="{{ url_for('public.latest_edition') }}">MuckScraper</a>
-    <div class="edition-line">
-        <span class="type-dot" style="background: {{ edition_dot_colors.get(edition.edition_type, '#6d28d9') }};"></span>
-        {{ edition.edition_type }} Edition
-    </div>
+    <div class="edition-line">{{ edition.edition_type }} Edition</div>
     <div class="edition-date">{{ edition.date.strftime('%A, %B %d, %Y') }}</div>
+    {% if total_pages > 1 %}<div class="edition-page-of">Page {{ page }} of {{ total_pages }}</div>{% endif %}
+    <hr class="masthead-rule">
 </div>
 
-<nav class="edition-strip">
-    {% for e in recent_editions %}
-        <a class="edition-chip {% if e.id == edition.id %}active{% endif %}"
-           href="{{ url_for('public.view_edition', edition_date=e.date.isoformat(), edition_type=e.edition_type) }}">
-            {{ e.date.strftime('%b %d') }} · {{ e.edition_type|capitalize }}
-        </a>
-    {% endfor %}
-    <a class="edition-chip archive-link" href="{{ url_for('public.edition_archive') }}">Full Archive →</a>
-</nav>
+<div class="page-shell">
+    <aside class="sidebar">
+        <div class="sidebar-section">
+            <div class="sidebar-heading">Recent Editions</div>
+            {% for day, eds in recent_editions|groupby('date') %}
+                <div class="sidebar-day">
+                    <div class="sidebar-day-label">{{ day.strftime('%A, %b %d') }}</div>
+                    {% for e in eds %}
+                        <a class="sidebar-edition-link {% if e.id == edition.id %}active{% endif %}"
+                           href="{{ url_for('public.view_edition', edition_date=e.date.isoformat(), edition_type=e.edition_type) }}">
+                            {{ e.edition_type|capitalize }} Edition
+                        </a>
+                    {% endfor %}
+                </div>
+            {% endfor %}
+            <a class="sidebar-archive-link" href="{{ url_for('public.edition_archive') }}">Full Archive →</a>
+        </div>
 
-<div class="tag-key">
-    <span>Tag Key:</span>
-    <span class="tag-key-item"><span class="source-flag as">AS</span> Curated Bias Rating</span>
-    <span class="tag-key-item"><span class="source-flag ai">AI</span> AI-Generated Rating</span>
-</div>
+        <div class="sidebar-section">
+            <div class="sidebar-heading">Tag Key</div>
+            <div class="sidebar-tagkey-item"><span class="source-flag">AS</span> Curated Bias Rating</div>
+            <div class="sidebar-tagkey-item"><span class="source-flag">AI</span> AI-Generated Rating</div>
+        </div>
 
-<div class="content-column">
-    {% if total_pages > 1 %}
-    <div class="page-info-top">Page {{ page }} of {{ total_pages }} · {{ total_story_count }} stories</div>
-    {% endif %}
+        <div class="sidebar-section">
+            <div class="sidebar-heading">About This Edition</div>
+            <p class="sidebar-about">
+                Stories are ranked and outlets balanced across the political
+                spectrum, so no single viewpoint dominates the page.
+            </p>
+            <div class="sidebar-stats">
+                {{ edition_stats.stories }} stories ·
+                {{ edition_stats.articles }} articles ·
+                {{ edition_stats.outlets }} outlets
+            </div>
+        </div>
+    </aside>
 
+    <main class="main-column">
     {% if entries %}
         {% for entry in entries %}
             {% set story = entry.story %}
@@ -476,13 +563,14 @@
             {% set bias = entry.bias %}
             {% set featured_article = story.articles|selectattr('image_url')|first %}
             {% set image_url = edition_story.source_image_url or (featured_article.image_url if featured_article else None) %}
+            {% set outlet_count = story.unique_outlets|length %}
+            {% set article_count = story.articles|length %}
 
             <article class="story-article {{ entry.kind_class }}">
                 <div class="story-kicker-row">
                     <span class="kicker {{ entry.kind_class }}">{{ entry.kind_label }}</span>
                     <span class="story-meta">
-                        {{ story.unique_outlets|length }} Source Outlet{{ 's' if story.unique_outlets|length != 1 else '' }} ·
-                        {{ story.articles|length }} Article{{ 's' if story.articles|length != 1 else '' }}
+                        {{ article_count }} Source Article{{ 's' if article_count != 1 else '' }}
                         {% if story.last_updated %}
                             · Last Updated:
                             <span class="local-date" data-utc="{{ story.last_updated.isoformat() }}Z">{{ story.last_updated.strftime('%b %d, %Y %H:%M') }}</span>
@@ -491,66 +579,107 @@
                     {% if edition_story.has_updates %}<span class="updates-flag">New Updates</span>{% endif %}
                 </div>
 
-                <h2 class="story-headline headline-font">
-                    <a href="{{ url_for('public.view_story', story_id=story.id) }}">{{ story.display_headline }}</a>
-                </h2>
+                {% if entry.kind_class == 'developing' %}
+                    <div class="developing-row">
+                        {% if image_url %}
+                        <div class="developing-media">
+                            <img src="{{ image_url }}" alt="" loading="lazy">
+                            {% if featured_article and featured_article.outlet %}
+                                <div class="photo-credit">Photo: {{ featured_article.outlet.name }}</div>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+                        <div class="developing-body">
+                            <h2 class="story-headline headline-font">
+                                <a href="{{ url_for('public.view_story', story_id=story.id) }}">{{ story.display_headline }}</a>
+                            </h2>
 
-                {% if image_url and entry.kind_class != 'in-brief' %}
-                    <div class="story-photo-wrap">
-                        <img src="{{ image_url }}" alt="" loading="lazy">
+                            {% if bias.counts.leftish or bias.counts.rightish or bias.counts.center %}
+                            <div class="bias-balance-rule">
+                                {% if bias.percents.leftish %}<span class="bias-seg leftish" style="width:{{ bias.percents.leftish }}%"></span>{% endif %}
+                                {% if bias.percents.center %}<span class="bias-seg center" style="width:{{ bias.percents.center }}%"></span>{% endif %}
+                                {% if bias.percents.rightish %}<span class="bias-seg rightish" style="width:{{ bias.percents.rightish }}%"></span>{% endif %}
+                                {% if bias.percents.unrated %}<span class="bias-seg unrated" style="width:{{ bias.percents.unrated }}%"></span>{% endif %}
+                            </div>
+                            {% endif %}
+
+                            {% if story.summary %}
+                                <p class="story-summary">{{ story.summary|truncate(260) }}</p>
+                            {% elif story.title %}
+                                <p class="story-summary">{{ story.title }}</p>
+                            {% endif %}
+
+                            <div class="outlet-tag-row">
+                                {% for outlet in story.unique_outlets[:4] %}
+                                    <span class="outlet-tag">
+                                        {{ outlet.name }}
+                                        {% if outlet.bias_score is not none %}
+                                            {% set bucket = outlet.bias_score|round|int %}
+                                            <span class="bias-pill {{ 'left' if bucket == 1 else 'center-left' if bucket == 2 else 'center-right' if bucket == 4 else 'right' if bucket >= 5 else 'center' }}">{{ outlet.bias_score|bias_short_label }}</span>
+                                            <span class="source-flag">{{ 'AS' if outlet.bias_source == 'static' else 'AI' }}</span>
+                                        {% endif %}
+                                    </span>
+                                {% endfor %}
+                            </div>
+
+                            <div class="read-more-row">
+                                <a class="link-read" href="{{ url_for('public.view_story', story_id=story.id) }}">Read Full Coverage →</a>
+                            </div>
+                        </div>
                     </div>
-                    {% if featured_article and featured_article.outlet %}
-                        <div class="photo-credit">Photo: {{ featured_article.outlet.name }}</div>
-                    {% endif %}
-                {% endif %}
-
-                {% if bias.counts.leftish or bias.counts.rightish or bias.counts.center %}
-                <div class="bias-balance-rule">
-                    {% if bias.percents.leftish %}<span class="bias-seg leftish" style="width:{{ bias.percents.leftish }}%"></span>{% endif %}
-                    {% if bias.percents.center %}<span class="bias-seg center" style="width:{{ bias.percents.center }}%"></span>{% endif %}
-                    {% if bias.percents.rightish %}<span class="bias-seg rightish" style="width:{{ bias.percents.rightish }}%"></span>{% endif %}
-                    {% if bias.percents.unrated %}<span class="bias-seg unrated" style="width:{{ bias.percents.unrated }}%"></span>{% endif %}
-                </div>
-                {% endif %}
-
-                {% if entry.kind_class == 'in-brief' %}
-                    <p class="story-summary">{{ (story.summary or story.title)|truncate(180) }}</p>
-                    <div class="outlet-tag-row">
-                        {% for outlet in story.unique_outlets[:4] %}
-                            <span class="outlet-tag">
-                                {{ outlet.name }}
-                                {% if outlet.bias_score is not none %}
-                                    {% set bucket = outlet.bias_score|round|int %}
-                                    <span class="bias-pill {{ 'left' if bucket == 1 else 'center-left' if bucket == 2 else 'center-right' if bucket == 4 else 'right' if bucket >= 5 else 'center' }}">{{ outlet.bias_score|bias_short_label }}</span>
-                                    <span class="source-flag {{ 'as' if outlet.bias_source == 'static' else 'ai' }}">{{ 'AS' if outlet.bias_source == 'static' else 'AI' }}</span>
-                                {% endif %}
-                            </span>
-                        {% endfor %}
-                    </div>
-                    <a class="view-coverage-link" href="{{ url_for('public.view_story', story_id=story.id) }}">View Full Coverage →</a>
                 {% else %}
-                    {% if story.summary %}
-                        <p class="story-summary">{{ story.summary|truncate(420) }}</p>
-                    {% elif story.title %}
-                        <p class="story-summary">{{ story.title }}</p>
+                    <h2 class="story-headline headline-font">
+                        <a href="{{ url_for('public.view_story', story_id=story.id) }}">{{ story.display_headline }}</a>
+                    </h2>
+
+                    {% if image_url and entry.kind_class == 'top-story' %}
+                        <div class="story-photo-wrap">
+                            <img src="{{ image_url }}" alt="" loading="lazy">
+                        </div>
+                        {% if featured_article and featured_article.outlet %}
+                            <div class="photo-credit">Photo: {{ featured_article.outlet.name }}</div>
+                        {% endif %}
                     {% endif %}
 
-                    <div class="outlet-tag-row">
-                        {% for outlet in story.unique_outlets[:6] %}
-                            <span class="outlet-tag">
-                                {{ outlet.name }}
-                                {% if outlet.bias_score is not none %}
-                                    {% set bucket = outlet.bias_score|round|int %}
-                                    <span class="bias-pill {{ 'left' if bucket == 1 else 'center-left' if bucket == 2 else 'center-right' if bucket == 4 else 'right' if bucket >= 5 else 'center' }}">{{ outlet.bias_score|bias_short_label }}</span>
-                                    <span class="source-flag {{ 'as' if outlet.bias_source == 'static' else 'ai' }}">{{ 'AS' if outlet.bias_source == 'static' else 'AI' }}</span>
-                                {% endif %}
-                            </span>
-                        {% endfor %}
+                    {% if entry.kind_class == 'top-story' and (bias.counts.leftish or bias.counts.rightish or bias.counts.center) %}
+                    <div class="bias-balance-rule">
+                        {% if bias.percents.leftish %}<span class="bias-seg leftish" style="width:{{ bias.percents.leftish }}%"></span>{% endif %}
+                        {% if bias.percents.center %}<span class="bias-seg center" style="width:{{ bias.percents.center }}%"></span>{% endif %}
+                        {% if bias.percents.rightish %}<span class="bias-seg rightish" style="width:{{ bias.percents.rightish }}%"></span>{% endif %}
+                        {% if bias.percents.unrated %}<span class="bias-seg unrated" style="width:{{ bias.percents.unrated }}%"></span>{% endif %}
                     </div>
+                    {% endif %}
 
-                    <div class="read-more-row">
-                        <a class="btn-read" href="{{ url_for('public.view_story', story_id=story.id) }}">Read Full Coverage →</a>
-                    </div>
+                    {% if entry.kind_class == 'in-brief' %}
+                        <p class="story-summary">{{ (story.summary or story.title)|truncate(140) }}</p>
+                        <p class="brief-coverage-line">
+                            {{ article_count }} source article{{ 's' if article_count != 1 else '' }} from {{ outlet_count }} outlet{{ 's' if outlet_count != 1 else '' }}.
+                            <a class="view-coverage-link" href="{{ url_for('public.view_story', story_id=story.id) }}">View Full Coverage →</a>
+                        </p>
+                    {% else %}
+                        {% if story.summary %}
+                            <p class="story-summary">{{ story.summary|truncate(420) }}</p>
+                        {% elif story.title %}
+                            <p class="story-summary">{{ story.title }}</p>
+                        {% endif %}
+
+                        <div class="outlet-tag-row">
+                            {% for outlet in story.unique_outlets[:6] %}
+                                <span class="outlet-tag">
+                                    {{ outlet.name }}
+                                    {% if outlet.bias_score is not none %}
+                                        {% set bucket = outlet.bias_score|round|int %}
+                                        <span class="bias-pill {{ 'left' if bucket == 1 else 'center-left' if bucket == 2 else 'center-right' if bucket == 4 else 'right' if bucket >= 5 else 'center' }}">{{ outlet.bias_score|bias_short_label }}</span>
+                                        <span class="source-flag">{{ 'AS' if outlet.bias_source == 'static' else 'AI' }}</span>
+                                    {% endif %}
+                                </span>
+                            {% endfor %}
+                        </div>
+
+                        <div class="read-more-row">
+                            <a class="btn-read" href="{{ url_for('public.view_story', story_id=story.id) }}">Read Full Coverage →</a>
+                        </div>
+                    {% endif %}
                 {% endif %}
             </article>
         {% endfor %}
@@ -577,6 +706,7 @@
         {% endif %}
     </div>
     {% endif %}
+    </main>
 </div>
 
 <div class="edition-pager">

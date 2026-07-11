@@ -140,7 +140,19 @@ def view_edition(edition_date, edition_type):
         else None
     )
 
-    recent_editions = sorted(all_published, key=_edition_sort_key, reverse=True)[:8]
+    recent_editions = sorted(all_published, key=_edition_sort_key, reverse=True)[:10]
+
+    outlet_ids = set()
+    total_articles = 0
+    for item in entries:
+        total_articles += len(item["story"].articles)
+        outlet_ids.update(o.id for o in item["story"].unique_outlets)
+
+    edition_stats = {
+        "stories": len(entries),
+        "articles": total_articles,
+        "outlets": len(outlet_ids),
+    }
 
     ollama_online = check_ollama_status()
 
@@ -149,6 +161,7 @@ def view_edition(edition_date, edition_type):
         edition=edition,
         entries=page_entries,
         total_story_count=len(entries),
+        edition_stats=edition_stats,
         page=page,
         total_pages=total_pages,
         recent_editions=recent_editions,

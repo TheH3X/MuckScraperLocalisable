@@ -10,25 +10,29 @@
     <title>Full Archive — MuckScraper</title>
     <style>
         :root {
-            --bg:         #fbf9f4;
+            --bg:         #fafaf8;
             --surface:    #ffffff;
-            --text:       #1c1a17;
-            --text-muted: #5c574e;
-            --text-faint: #928c7f;
-            --border:     #ddd6c8;
-            --shadow:     0 8px 24px rgba(40, 30, 10, 0.06);
-            --chip-bg:    #f2efe4;
+            --text:       #1a1a1a;
+            --text-muted: #57534e;
+            --text-faint: #8a8681;
+            --border:     #e2e0da;
+            --border-strong: #1a1a1a;
+            --shadow:     0 6px 18px rgba(0, 0, 0, 0.05);
+            --chip-bg:    #f0eee8;
+            --accent:     #1f2d3d;
         }
 
         [data-theme="dark"] {
-            --bg:         #17140f;
-            --surface:    #1f1b15;
-            --text:       #f3efe6;
-            --text-muted: #c2bbaa;
-            --text-faint: #8f8776;
-            --border:     #3a3427;
-            --shadow:     0 8px 24px rgba(0,0,0,0.4);
-            --chip-bg:    #2a251c;
+            --bg:         #141312;
+            --surface:    #1c1b19;
+            --text:       #ece9e3;
+            --text-muted: #b3aea3;
+            --text-faint: #837e75;
+            --border:     #322f2a;
+            --border-strong: #ece9e3;
+            --shadow:     0 6px 18px rgba(0,0,0,0.4);
+            --chip-bg:    #262420;
+            --accent:     #c9d3dd;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -66,28 +70,29 @@
 
         .masthead {
             text-align: center;
-            padding: 36px 20px 22px;
-            border-bottom: 3px solid transparent;
-            border-image: linear-gradient(90deg, #6d28d9, #db2777, #f59e0b) 1;
+            padding: 34px 20px 18px;
         }
         .wordmark {
             font-family: Georgia, "Times New Roman", serif;
-            font-size: 46px;
-            font-weight: 900;
-            letter-spacing: -1px;
-            background: linear-gradient(90deg, #6d28d9, #db2777, #f59e0b);
-            -webkit-background-clip: text;
-            background-clip: text;
-            color: transparent;
+            font-size: 42px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            color: var(--text);
             text-decoration: none;
         }
         .masthead .tagline {
-            font-size: 12px;
-            font-weight: 800;
+            font-size: 11px;
+            font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 2.5px;
             color: var(--text-muted);
-            margin-top: 10px;
+            margin-top: 12px;
+        }
+        .masthead-rule {
+            border: none;
+            border-top: 3px double var(--border-strong);
+            max-width: 720px;
+            margin: 16px auto 0;
         }
 
         .main { max-width: 760px; margin: 0 auto; padding: 40px 24px 80px; }
@@ -115,23 +120,23 @@
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            padding: 10px 16px;
-            border-radius: 8px;
+            padding: 9px 15px;
+            border-radius: 4px;
             background: var(--surface);
             border: 1px solid var(--border);
             box-shadow: var(--shadow);
             text-decoration: none;
             color: var(--text);
             font-size: 13px;
-            font-weight: 700;
+            font-weight: 600;
         }
-        .edition-link:hover { border-color: #6d28d9; color: #6d28d9; }
+        .edition-link:hover { border-color: var(--accent); color: var(--accent); }
 
-        .type-dot { width: 9px; height: 9px; border-radius: 50%; }
-        .type-dot.morning   { background: #f59e0b; }
-        .type-dot.afternoon { background: #fb7185; }
-        .type-dot.evening   { background: #6366f1; }
-        .type-dot.night     { background: #7c3aed; }
+        .type-dot { width: 8px; height: 8px; border-radius: 50%; }
+        .type-dot.morning   { background: #c9a24a; }
+        .type-dot.afternoon { background: #c1806b; }
+        .type-dot.evening   { background: #4a6fa1; }
+        .type-dot.night     { background: #5b5486; }
 
         .empty { text-align: center; padding: 80px 0; color: var(--text-faint); font-style: italic; }
     </style>
@@ -146,6 +151,7 @@
 <div class="masthead">
     <a class="wordmark" href="{{ url_for('public.latest_edition') }}">MuckScraper</a>
     <div class="tagline">Full Archive</div>
+    <hr class="masthead-rule">
 </div>
 
 <div class="main">
