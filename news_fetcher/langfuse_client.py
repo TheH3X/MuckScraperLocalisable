@@ -9,5 +9,5 @@ langfuse = Langfuse(
     public_key=_public_key,
     secret_key=_secret_key,
     host=os.environ.get("LANGFUSE_HOST", "http://localhost:3000"),
-    tracing_enabled=bool(_public_key and _secret_key),
+    enabled=bool(_public_key and _secret_key),
 )
