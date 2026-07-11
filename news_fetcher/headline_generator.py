@@ -2,18 +2,11 @@
 # news_fetcher/headline_generator.py
 import logging
 import os
-from langfuse import Langfuse
+from news_fetcher.langfuse_client import langfuse
 from langfuse.decorators import observe, langfuse_context
 from news_fetcher.llm_client import generate
 
 logger = logging.getLogger(__name__)
-
-langfuse = Langfuse(
-    public_key=os.environ.get("LANGFUSE_PUBLIC_KEY", ""),
-    secret_key=os.environ.get("LANGFUSE_SECRET_KEY", ""),
-    host=os.environ.get("LANGFUSE_HOST", "http://localhost:3000")
-)
-
 @observe()
 def generate_story_headline(story):
     """

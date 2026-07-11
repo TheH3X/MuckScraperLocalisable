@@ -1,19 +1,11 @@
 # muckscraperHeadlinesGoogleNEW/news_fetcher/outlet_bias_llm.py
 # news_fetcher/outlet_bias_llm.py
-import os
 import logging
-from langfuse import Langfuse
+from news_fetcher import langfuse_client  # noqa: F401
 from langfuse.decorators import observe, langfuse_context
 from news_fetcher.llm_client import generate
 
 logger = logging.getLogger(__name__)
-
-langfuse = Langfuse(
-    public_key=os.environ.get("LANGFUSE_PUBLIC_KEY", ""),
-    secret_key=os.environ.get("LANGFUSE_SECRET_KEY", ""),
-    host=os.environ.get("LANGFUSE_HOST", "http://localhost:3000")
-)
-
 from aggregator.country_config import get_config
 _cfg = get_config()
 
@@ -41,7 +33,7 @@ def _ask_ollama(prompt):
 
 def _parse_bias_score(raw, label):
     """Parse a 1-5 integer from Ollama's response."""
-    if raw is None:
+    if not raw:
         return None
     import json
     try:

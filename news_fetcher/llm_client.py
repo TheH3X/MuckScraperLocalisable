@@ -44,10 +44,13 @@ def generate(prompt, task="classification", json_mode=False, model=None):
         "prompt": prompt,
         "stream": False,
         "options": options,
+        # qwen3 defaults to thinking mode; on /api/generate that can consume
+        # num_predict and leave response empty (especially with format=json).
+        "think": False,
     }
     if json_mode:
         payload["format"] = "json"
-    
+
     try:
         response = requests.post(
             f"{OLLAMA_HOST}/api/generate",
@@ -55,7 +58,12 @@ def generate(prompt, task="classification", json_mode=False, model=None):
             timeout=TIMEOUT,
         )
         response.raise_for_status()
-        return response.json().get("response", "").strip()
+        data = response.json()
+        text = (data.get("response") or "").strip()
+        if not text:
+            # Some reasoning models put JSON in thinking when format=json.
+            text = (data.get("thinking") or "").strip()
+        return text or None
     except Exception as e:
         logger.error(f"Error communicating with Ollama: {e}")
         return None
