@@ -433,6 +433,26 @@ def get_or_create_topic(topic_name):
     return topic
 
 
+def _topic_already_linked(topics, topic):
+    if topic is None:
+        return True
+    topic_id = topic.id
+    topic_name = (topic.name or "").strip().lower()
+    for existing in topics:
+        if topic_id is not None and existing.id == topic_id:
+            return True
+        if topic_id is None and topic_name and (existing.name or "").strip().lower() == topic_name:
+            return True
+    return False
+
+
+def append_topic_if_missing(parent, topic):
+    """Append a topic to a Story/Article without duplicate junction rows."""
+    if _topic_already_linked(parent.topics, topic):
+        return
+    parent.topics.append(topic)
+
+
 def normalize_url(url):
     """Strip query parameters from URL to detect duplicates."""
     try:
@@ -719,7 +739,10 @@ def store_articles(articles_data, topic_name, provider=None, progress_cb=None):
     cutoff = datetime.utcnow() - timedelta(days=GROUPING_LOOKBACK_DAYS)
     recent_stories = (
         Story.query
-        .options(selectinload(Story.articles))
+        .options(
+            selectinload(Story.articles),
+            selectinload(Story.topics),
+        )
         .filter(Story.created_at >= cutoff)
         .all()
     )
@@ -829,23 +852,23 @@ def store_articles(articles_data, topic_name, provider=None, progress_cb=None):
         if story not in recent_stories:
             recent_stories.append(story)
 
+        # Classify before tagging so pending topic rows are not autoflushed
+        # during classifier DB lookups.
+        classified_topic_names = classify_article(title, content)
+
         # Tag with the fetch topic so sidebar filters match scheduled/manual fetches
         if topic_name and topic_name != "Custom":
             fetch_topic = get_or_create_topic(topic_name)
-            if fetch_topic not in story.topics:
-                story.topics.append(fetch_topic)
+            append_topic_if_missing(story, fetch_topic)
 
-        # Classify article into topics via Ollama
         from aggregator.models import Topic as TopicModel
-        classified_topic_names = classify_article(title, content)
         for classified_name in classified_topic_names:
             classified_topic = TopicModel.query.filter_by(name=classified_name).first()
             if not classified_topic:
                 classified_topic = TopicModel(name=classified_name)
                 db.session.add(classified_topic)
                 db.session.flush()
-            if classified_topic not in story.topics:
-                story.topics.append(classified_topic)
+            append_topic_if_missing(story, classified_topic)
 
         scrape_result = scrape_article(url, fallback_content=content)
         scraped_content = scrape_result.content
@@ -916,8 +939,7 @@ def store_articles(articles_data, topic_name, provider=None, progress_cb=None):
 
         # Tag article with same topics as story
         for t in story.topics:
-            if t not in new_article.topics:
-                new_article.topics.append(t)
+            append_topic_if_missing(new_article, t)
 
         # Single-article stories keep headline = None so UI falls back to title.
         # Multi-article story headlines are now generated in a batch pass by the scheduler.
@@ -1004,8 +1026,7 @@ def review_ambiguous_grouping_matches(review_hours=24, max_articles=75):
             reassigned += 1
 
             for topic in list(original_story.topics) if original_story else []:
-                if topic not in matched_story.topics:
-                    matched_story.topics.append(topic)
+                append_topic_if_missing(matched_story, topic)
 
             if original_story:
                 clear_story_headline_if_single_article(original_story)
@@ -1269,8 +1290,7 @@ def regroup_ungrouped_stories():
 
             # Merge topic tags
             for topic in story.topics:
-                if topic not in matched.topics:
-                    matched.topics.append(topic)
+                append_topic_if_missing(matched, topic)
 
             # Generate/Update headline for the matched story now that it has a new article
             from news_fetcher.headline_generator import generate_story_headline
@@ -1591,10 +1611,8 @@ def force_regroup_all():
                     db.session.flush()
                 
                 # Since we cleared article.topics = [] above, this is safe
-                if topic not in article.topics:
-                    article.topics.append(topic)
-                if topic not in story.topics:
-                    story.topics.append(topic)
+                append_topic_if_missing(article, topic)
+                append_topic_if_missing(story, topic)
 
             # Commit in batches of 50
             if (i + 1) % 50 == 0:
@@ -1654,12 +1672,10 @@ def reclassify_all_articles(batch_size=50):
                 db.session.add(topic)
                 db.session.flush()
             
-            if topic not in article.topics:
-                article.topics.append(topic)
-            
+            append_topic_if_missing(article, topic)
+
             if article.story:
-                if topic not in article.story.topics:
-                    article.story.topics.append(topic)
+                append_topic_if_missing(article.story, topic)
 
         # Commit in batches
         if (i + 1) % batch_size == 0:
