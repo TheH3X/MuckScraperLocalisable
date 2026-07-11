@@ -76,6 +76,23 @@ def register_filters(app):
             pass
         return summary.strip()
 
+    @app.template_filter("topic_color")
+    def topic_color(name):
+        """Pick a stable vivid color for a topic chip based on its name."""
+        palette = [
+            "#0891b2",  # cyan
+            "#db2777",  # pink
+            "#d97706",  # amber
+            "#65a30d",  # lime
+            "#7c3aed",  # violet
+            "#dc2626",  # red
+            "#059669",  # emerald
+            "#2563eb",  # blue
+        ]
+        if not name:
+            return palette[0]
+        return palette[sum(ord(ch) for ch in name) % len(palette)]
+
     @app.context_processor
     def inject_bias_helpers():
         from aggregator.country_config import get_config

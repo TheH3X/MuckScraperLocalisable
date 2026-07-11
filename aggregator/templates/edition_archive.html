@@ -1,0 +1,154 @@
+<!-- aggregator/templates/edition_archive.html -->
+<!DOCTYPE html>
+<html data-theme="light">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon_32.png') }}">
+    <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='favicon_192.png') }}">
+    <title>Full Archive — MuckScraper</title>
+    <style>
+        :root {
+            --bg:         #f4f5f9;
+            --surface:    #ffffff;
+            --text:       #16161f;
+            --text-muted: #565a70;
+            --text-faint: #8b8fa3;
+            --border:     #e8e9f2;
+            --shadow:     0 10px 30px rgba(31, 20, 80, 0.08);
+            --chip-bg:    #f0f1fa;
+        }
+
+        [data-theme="dark"] {
+            --bg:         #12111c;
+            --surface:    #1b1a29;
+            --text:       #f0f1fa;
+            --text-muted: #b3b5cc;
+            --text-faint: #7d80a0;
+            --border:     #2c2b3f;
+            --shadow:     0 10px 30px rgba(0,0,0,0.4);
+            --chip-bg:    #232236;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            transition: background 0.2s, color 0.2s;
+        }
+
+        .topbar {
+            background: linear-gradient(120deg, #4c1d95 0%, #7c3aed 45%, #db2777 100%);
+            padding: 16px 32px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .brand { color: #fff; font-size: 20px; font-weight: 900; text-decoration: none; letter-spacing: -0.5px; }
+        .theme-toggle {
+            background: rgba(255,255,255,0.15);
+            border: 1px solid rgba(255,255,255,0.3);
+            color: #fff;
+            padding: 7px 14px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 700;
+        }
+        .theme-toggle:hover { background: rgba(255,255,255,0.25); }
+
+        .main { max-width: 800px; margin: 0 auto; padding: 48px 24px 80px; }
+        h1 { font-size: 30px; font-weight: 900; margin-bottom: 8px; letter-spacing: -0.5px; }
+        .sub { color: var(--text-faint); font-size: 14px; margin-bottom: 40px; }
+
+        .day-group { margin-bottom: 28px; }
+        .day-label {
+            font-size: 13px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            color: var(--text-faint);
+            margin-bottom: 12px;
+        }
+
+        .edition-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .edition-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 18px;
+            border-radius: 14px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow);
+            text-decoration: none;
+            color: var(--text);
+            font-size: 14px;
+            font-weight: 700;
+        }
+        .edition-link:hover { border-color: #7c3aed; color: #7c3aed; }
+
+        .type-dot { width: 9px; height: 9px; border-radius: 50%; }
+        .type-dot.morning   { background: #f59e0b; }
+        .type-dot.afternoon { background: #fb7185; }
+        .type-dot.evening   { background: #6366f1; }
+        .type-dot.night     { background: #7c3aed; }
+
+        .empty { text-align: center; padding: 80px 0; color: var(--text-faint); font-style: italic; }
+    </style>
+</head>
+<body>
+
+<div class="topbar">
+    <a class="brand" href="{{ url_for('public.latest_edition') }}">MuckScraper</a>
+    <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙 Dark</button>
+</div>
+
+<div class="main">
+    <h1>Full Archive</h1>
+    <p class="sub">Every published edition, newest first.</p>
+
+    {% if grouped_editions %}
+        {% for day, editions in grouped_editions %}
+        <div class="day-group">
+            <div class="day-label">{{ day.strftime('%A, %B %d, %Y') }}</div>
+            <div class="edition-row">
+                {% for edition in editions %}
+                <a class="edition-link" href="{{ url_for('public.view_edition', edition_date=edition.date.isoformat(), edition_type=edition.edition_type) }}">
+                    <span class="type-dot {{ edition.edition_type }}"></span>
+                    {{ edition.edition_type|capitalize }} Edition
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div class="empty">No editions have been published yet.</div>
+    {% endif %}
+</div>
+
+<script>
+    function applyTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        const btn = document.getElementById('theme-toggle');
+        if (btn) btn.textContent = theme === 'dark' ? '☀️ Light' : '🌙 Dark';
+    }
+    function toggleTheme() {
+        const current = document.documentElement.getAttribute('data-theme');
+        const next = current === 'dark' ? 'light' : 'dark';
+        localStorage.setItem('muckscraper-theme', next);
+        applyTheme(next);
+    }
+    applyTheme(localStorage.getItem('muckscraper-theme') || 'light');
+</script>
+
+</body>
+</html>

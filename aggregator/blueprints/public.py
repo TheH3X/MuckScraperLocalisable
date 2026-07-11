@@ -1,11 +1,11 @@
 import os
 import requests
 import logging
-from datetime import datetime, timedelta
-from flask import Blueprint, render_template, request, redirect, url_for, jsonify
+from datetime import datetime, timedelta, date as date_cls
+from flask import Blueprint, render_template, request, redirect, url_for, jsonify, abort
 from aggregator.search import healthcheck as meili_healthcheck
-from aggregator.models import Article, Story, Topic, RawArticlePayload
-from aggregator.story_view import apply_aggregator_filter
+from aggregator.models import Article, Story, Topic, RawArticlePayload, Edition, EditionStory
+from aggregator.story_view import apply_aggregator_filter, compute_bias_breakdown
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,93 @@ def aggregator_headlines():
         total_pages=1,
         show_single=True,
         is_multi_view=False
+    )
+
+
+EDITION_TYPE_ORDER = {"morning": 0, "afternoon": 1, "evening": 2, "night": 3}
+
+
+def _published_editions_query():
+    return Edition.query.filter_by(published=True)
+
+
+def _edition_sort_key(edition):
+    return (edition.date, EDITION_TYPE_ORDER.get(edition.edition_type, 99))
+
+
+@public.route("/editions/latest")
+def latest_edition():
+    edition = _published_editions_query().order_by(Edition.created_at.desc()).first()
+    if not edition:
+        abort(404, description="No editions have been published yet.")
+    return redirect(url_for(
+        "public.view_edition",
+        edition_date=edition.date.isoformat(),
+        edition_type=edition.edition_type,
+    ))
+
+
+@public.route("/editions")
+def edition_archive():
+    editions = _published_editions_query().order_by(
+        Edition.date.desc(), Edition.created_at.desc()
+    ).all()
+
+    grouped = {}
+    for edition in editions:
+        grouped.setdefault(edition.date, []).append(edition)
+    for day_editions in grouped.values():
+        day_editions.sort(key=lambda e: EDITION_TYPE_ORDER.get(e.edition_type, 99))
+
+    return render_template(
+        "edition_archive.html",
+        grouped_editions=sorted(grouped.items(), key=lambda item: item[0], reverse=True),
+    )
+
+
+@public.route("/editions/<edition_date>/<edition_type>")
+def view_edition(edition_date, edition_type):
+    try:
+        parsed_date = date_cls.fromisoformat(edition_date)
+    except ValueError:
+        abort(404)
+
+    edition = Edition.query.filter_by(date=parsed_date, edition_type=edition_type).first()
+    if not edition:
+        abort(404)
+
+    edition_stories = edition.edition_stories.order_by(EditionStory.rank).all()
+    stories_with_bias = []
+    for edition_story in edition_stories:
+        story = edition_story.story
+        if not story:
+            continue
+        apply_aggregator_filter(story)
+        stories_with_bias.append((edition_story, story, compute_bias_breakdown(story)))
+
+    all_published = sorted(_published_editions_query().all(), key=_edition_sort_key)
+    current_index = next(
+        (i for i, e in enumerate(all_published) if e.id == edition.id), None
+    )
+    prev_edition = all_published[current_index - 1] if current_index and current_index > 0 else None
+    next_edition = (
+        all_published[current_index + 1]
+        if current_index is not None and current_index + 1 < len(all_published)
+        else None
+    )
+
+    recent_editions = sorted(all_published, key=_edition_sort_key, reverse=True)[:8]
+
+    ollama_online = check_ollama_status()
+
+    return render_template(
+        "edition.html",
+        edition=edition,
+        stories_with_bias=stories_with_bias,
+        recent_editions=recent_editions,
+        prev_edition=prev_edition,
+        next_edition=next_edition,
+        ollama_online=ollama_online,
     )
 
 

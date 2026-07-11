@@ -2,7 +2,7 @@
 # news_fetcher/fetch_and_store_articles.py
 
 from aggregator import create_app, db
-from aggregator.article_signals import ROUNDUP_TITLE_PATTERNS, bias_bucket_for_score, is_roundup_article, low_value_article_reason
+from aggregator.article_signals import ROUNDUP_TITLE_PATTERNS, bias_bucket_for_score, bias_side_for_score, is_roundup_article, low_value_article_reason
 from aggregator.models import Article, Outlet, Story, Topic
 
 from news_fetcher.outlet_bias_llm import get_outlet_bias_from_llm
@@ -282,6 +282,13 @@ def stories_look_duplicate_for_edition(story_a, story_b):
     return False
 
 
+def _article_bias_side(article):
+    score = article.bias_score
+    if score is None and article.outlet:
+        score = article.outlet.bias_score
+    return bias_side_for_score(score)
+
+
 def _story_balance_bucket(story):
     counts = {
         "leftish": 0,
@@ -290,18 +297,8 @@ def _story_balance_bucket(story):
         "unrated": 0,
     }
     for article in story.articles:
-        score = article.bias_score
-        if score is None and article.outlet:
-            score = article.outlet.bias_score
-        bucket = bias_bucket_for_score(score)
-        if bucket in ("left", "lean_left"):
-            counts["leftish"] += 1
-        elif bucket in ("right", "lean_right"):
-            counts["rightish"] += 1
-        elif bucket == "center":
-            counts["center"] += 1
-        else:
-            counts["unrated"] += 1
+        side = _article_bias_side(article)
+        counts[side] = counts.get(side, 0) + 1
 
     leftish = counts["leftish"]
     center = counts["center"]
@@ -328,14 +325,10 @@ def _story_has_left_and_right_coverage(story):
     has_rightish = False
 
     for article in story.articles:
-        score = article.bias_score
-        if score is None and article.outlet:
-            score = article.outlet.bias_score
-        bucket = bias_bucket_for_score(score)
-
-        if bucket in ("left", "lean_left"):
+        side = _article_bias_side(article)
+        if side == "leftish":
             has_leftish = True
-        elif bucket in ("right", "lean_right"):
+        elif side == "rightish":
             has_rightish = True
 
         if has_leftish and has_rightish:
@@ -1385,8 +1378,8 @@ def regroup_ungrouped_stories():
             from news_fetcher.headline_generator import generate_story_headline
             if not matched.headline:
                 headline = generate_story_headline(matched)
-            if headline:
-                matched.headline = headline
+                if headline:
+                    matched.headline = headline
 
             # Delete the now-empty story
             db.session.delete(story)
@@ -1996,8 +1989,8 @@ def sync_static_ratings():
     and have it automatically retroactively applied to existing outlets without
     a full migration script.
     """
+    from aggregator import db
     from aggregator.models import Outlet, Article
-    from aggregator.database import db
     from news_fetcher.outlet_bias_lookup import get_outlet_bias_score
     import logging
 

@@ -5,7 +5,7 @@ import logging
 from collections import Counter
 from datetime import datetime
 from datetime import timedelta
-from aggregator.article_signals import bias_bucket_for_score
+from aggregator.article_signals import bias_side_for_score
 from news_fetcher.fetch_and_store_articles import merge_count_maps
 from news_fetcher.story_grouper import normalize_title_tokens, titles_are_near_duplicates
 
@@ -169,7 +169,7 @@ def fetch_and_store_rss(progress_cb=None):
 
 
 def _story_bias_counts(story):
-    """Count articles by bias bucket using article.bias_score exclusively.
+    """Count articles by editorial side using article.bias_score exclusively.
 
     A None article bias_score means bias was intentionally suppressed for that
     article's topic — do NOT fall back to outlet.bias_score.
@@ -179,7 +179,7 @@ def _story_bias_counts(story):
         score = article.bias_score
         if score is None:
             continue  # Suppressed — omit from counts rather than use outlet score
-        counts[bias_bucket_for_score(score)] += 1
+        counts[bias_side_for_score(score)] += 1
     return counts
 
 
@@ -214,14 +214,14 @@ def _story_needs_right_enrichment(story):
             return False
 
     counts = _story_bias_counts(story)
-    if counts["lean_right"] or counts["right"]:
+    if counts["rightish"]:
         return False
 
-    rated_total = sum(counts[bucket] for bucket in ("left", "lean_left", "center", "lean_right", "right"))
+    rated_total = counts["leftish"] + counts["center"] + counts["rightish"]
     if rated_total < 2:
         return False
 
-    leftish_total = counts["left"] + counts["lean_left"]
+    leftish_total = counts["leftish"]
     if leftish_total >= 2:
         return True
 
@@ -238,14 +238,14 @@ def _story_needs_left_enrichment(story):
             return False
 
     counts = _story_bias_counts(story)
-    if counts["left"] or counts["lean_left"]:
+    if counts["leftish"]:
         return False
 
-    rated_total = sum(counts[bucket] for bucket in ("left", "lean_left", "center", "lean_right", "right"))
+    rated_total = counts["leftish"] + counts["center"] + counts["rightish"]
     if rated_total < 2:
         return False
 
-    rightish_total = counts["right"] + counts["lean_right"]
+    rightish_total = counts["rightish"]
     if rightish_total >= 2:
         return True
 

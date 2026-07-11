@@ -1,5 +1,6 @@
 from datetime import datetime as dt
 
+from aggregator.article_signals import bias_side_for_score
 from aggregator.constants import AGGREGATORS
 
 
@@ -57,4 +58,26 @@ def apply_aggregator_filter(story):
         "blocked": status_counts["blocked"],
         "readable_pct": round((readable_articles / total_articles) * 100) if total_articles else 0,
         "full_pct": round((status_counts["success"] / total_articles) * 100) if total_articles else 0,
+    }
+
+
+def compute_bias_breakdown(story):
+    """
+    Count a story's articles by editorial side (leftish/center/rightish/unrated),
+    falling back to outlet bias when an article has no bias score of its own.
+    Returns a dict with counts and percentages for rendering a balance bar.
+    """
+    counts = {"leftish": 0, "center": 0, "rightish": 0, "unrated": 0}
+    for article in story.articles:
+        score = article.bias_score
+        if score is None and article.outlet:
+            score = article.outlet.bias_score
+        side = bias_side_for_score(score)
+        counts[side] = counts.get(side, 0) + 1
+
+    total = len(story.articles) or 1
+    return {
+        "counts": counts,
+        "percents": {side: round((count / total) * 100) for side, count in counts.items()},
+        "has_mixed_coverage": bool(counts["leftish"]) and bool(counts["rightish"]),
     }
