@@ -5,11 +5,55 @@ import re
 import logging
 from news_fetcher.langfuse_client import langfuse
 from langfuse.decorators import observe, langfuse_context
-from news_fetcher.llm_client import generate, check_ollama_status
+from news_fetcher.llm_client import generate, check_ollama_status, truncate_to_token_budget
 
 logger = logging.getLogger(__name__)
 from aggregator.country_config import get_config
 _cfg = get_config()
+
+STORY_SUMMARY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "executive_summary": {"type": "string"},
+    },
+    "required": ["executive_summary"],
+}
+
+DEEP_REPORT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "the_story": {"type": "string"},
+        "why_it_matters": {"type": "string"},
+        "key_details": {"type": "string"},
+        "different_perspectives": {"type": "string"},
+        "whats_missing": {"type": "string"},
+        "whats_next": {"type": "string"},
+    },
+    "required": [
+        "the_story",
+        "why_it_matters",
+        "key_details",
+        "different_perspectives",
+        "whats_missing",
+        "whats_next",
+    ],
+}
+
+ARTICLE_SUMMARY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "the_big_picture": {"type": "string"},
+        "why_it_matters": {"type": "string"},
+        "quick_analysis": {"type": "string"},
+        "whats_next": {"type": "string"},
+    },
+    "required": ["the_big_picture", "why_it_matters", "quick_analysis", "whats_next"],
+}
+
+STORY_SUMMARY_MAX_ARTICLES = 5
+STORY_SUMMARY_CHARS_PER_ARTICLE = 700
+ARTICLE_SUMMARY_MAX_CHARS = 1500
+DEEP_REPORT_INPUT_TOKEN_BUDGET = 3000
 
 
 def strip_html(text):
@@ -31,6 +75,19 @@ _SUMMARY_JSON_SUFFIX = (
     "containing the summary paragraph as a string. "
     "Do not echo the articles, rules, or task back in the JSON."
 )
+
+
+def _build_story_articles_block(articles, chars_per_article=STORY_SUMMARY_CHARS_PER_ARTICLE):
+    """Format articles for story-level prompts with per-article char cap."""
+    article_texts = []
+    for i, article in enumerate(articles, 1):
+        text = f"{i}. Title: {article.title}"
+        if article.content:
+            clean_content = strip_html(article.content)
+            snippet = clean_content[:chars_per_article].strip()
+            text += f"\n   Content: {snippet}"
+        article_texts.append(text)
+    return "\n\n".join(article_texts)
 
 
 def _finalize_story_summary_prompt(prompt):
@@ -325,7 +382,9 @@ def summarize_story(story):
     analysis_type = detect_analysis_type(story)
     persona = get_persona(analysis_type, obj=story)
 
-    prompt_articles, excluded_articles = _select_story_prompt_articles(story, limit=10)
+    prompt_articles, excluded_articles = _select_story_prompt_articles(
+        story, limit=STORY_SUMMARY_MAX_ARTICLES
+    )
     readable_articles = [
         article for article in prompt_articles
         if len(strip_html(article.content or "").strip()) >= 200
@@ -346,18 +405,7 @@ def summarize_story(story):
         )
         return None
 
-    article_texts = []
-    for i, article in enumerate(prompt_articles, 1):
-        text = f"{i}. Title: {article.title}"
-        if article.content:
-            # Strip HTML before sending to Ollama
-            clean_content = strip_html(article.content)
-            # Use more content now that we have full scraped articles
-            snippet = clean_content[:1500].strip()
-            text += f"\n   Content: {snippet}"
-        article_texts.append(text)
-
-    combined = "\n\n".join(article_texts)
+    combined = _build_story_articles_block(readable_articles[:STORY_SUMMARY_MAX_ARTICLES])
 
     # Check if any of the story's topics has a DB-stored summary prompt override
     db_summary_prompt = None
@@ -377,9 +425,10 @@ def summarize_story(story):
         except (KeyError, ValueError):
             prompt = db_summary_prompt  # Use as-is if placeholders are wrong
     else:
+        # Static prefix first so consecutive summary calls share KV cache.
         prompt = f"""You are a {persona} writing an executive summary for a news briefing.
 
-Below are multiple news articles covering the same story. Write a concise executive summary.
+Write a concise executive summary for the story below.
 
 Rules:
 - Write exactly one short paragraph
@@ -389,8 +438,6 @@ Rules:
 
 Articles:
 {combined}"""
-
-    prompt = _finalize_story_summary_prompt(prompt)
 
     langfuse_context.update_current_observation(
         input=prompt,
@@ -402,7 +449,7 @@ Articles:
         }
     )
     try:
-        summary_response = generate(prompt, task="summary", json_mode=True)
+        summary_response = generate(prompt, task="summary", schema=STORY_SUMMARY_SCHEMA)
 
         langfuse_context.update_current_observation(
             output=summary_response
@@ -552,6 +599,8 @@ def generate_deep_report(story):
         if not combined.strip():
             return None
 
+    combined = truncate_to_token_budget(combined, DEEP_REPORT_INPUT_TOKEN_BUDGET)
+
     # Retrieve DB prompt override if available
     db_deep_prompt = None
     try:
@@ -574,29 +623,24 @@ def generate_deep_report(story):
         except (KeyError, ValueError):
             prompt = db_deep_prompt
     else:
-        # Generic fallback
+        # Static prefix first so consecutive report calls share KV cache.
         prompt = f"""You are an experienced journalist writing a detailed report on a news story.
 
-Below are articles covering the same story:
-
-{combined}
-
-Write a detailed analytical report.
-
-The report MUST be returned as a JSON object with the following keys:
-- "the_story": [Write 2-3 sentences explaining what happened factually]
-- "why_it_matters": [Explain the significance of this story — who it affects and how]
-- "key_details": [List the most important facts, figures, or developments from the coverage]
-- "different_perspectives": [Describe how different outlets or sources are framing this story. If coverage is uniform, say what angle is being emphasized.]
-- "whats_missing": [Identify what angles or questions seem absent from the coverage]
-- "whats_next": [Write one sentence on what to watch for]
+Write a detailed analytical report covering:
+- the_story: 2-3 sentences explaining what happened factually
+- why_it_matters: significance — who it affects and how
+- key_details: most important facts, figures, or developments
+- different_perspectives: how outlets frame the story (or what angle is emphasized if uniform)
+- whats_missing: angles or questions absent from the coverage
+- whats_next: one sentence on what to watch for
 
 Rules:
-- The brackets [ ] are instructions for you. Replace them with your actual analysis.
 - Stay neutral and analytical
 - Compare only the outlets and perspectives actually present in the article list
 - Do not use left/right political framing unless the story is explicitly about politics, government, law, elections, or policy
-- Return ONLY valid JSON."""
+
+Articles:
+{combined}"""
 
     langfuse_context.update_current_observation(
         input=prompt,
@@ -609,7 +653,7 @@ Rules:
 
     try:
         import json
-        report_response = generate(prompt, task="report", json_mode=True)
+        report_response = generate(prompt, task="report", schema=DEEP_REPORT_SCHEMA)
         langfuse_context.update_current_observation(output=report_response)
         
         if not report_response:
@@ -665,26 +709,23 @@ def summarize_article(article):
     analysis_type = detect_analysis_type(article)
     persona = get_persona(analysis_type)
 
-    clean_content = strip_html(article.content)[:3000].strip()
+    clean_content = strip_html(article.content)[:ARTICLE_SUMMARY_MAX_CHARS].strip()
     if not clean_content:
         return None
 
+    # Static prefix first so consecutive article-summary calls share KV cache.
     prompt = f"""You are a {persona} writing a tight Smart Brevity-style article briefing.
 
-Below is a news article. Write a concise briefing.
-
-The briefing MUST be returned as a JSON object with the following keys:
-- "the_big_picture": [Write one direct sentence on what happened.]
-- "why_it_matters": [Write 1-2 short sentences on why this story matters.]
-- "quick_analysis": [Write 1-2 short sentences on the framing, tension, consequence, uncertainty, or what stands out most.]
-- "whats_next": [Write one sentence on what to watch for next.]
+Write a concise briefing with four sections:
+- the_big_picture: one direct sentence on what happened
+- why_it_matters: 1-2 short sentences on why this story matters
+- quick_analysis: 1-2 short sentences on framing, tension, consequence, or what stands out
+- whats_next: one sentence on what to watch for next
 
 Rules:
-- The brackets [ ] are instructions for you. Replace them with your actual analysis.
 - Keep the full response to 4 short sections only
 - Be concrete, not generic
 - Do not repeat the same idea in multiple sections
-- Return ONLY valid JSON.
 
 Article title: {article.title}
 
@@ -698,7 +739,7 @@ Article content:
 
     try:
         import json
-        summary_response = generate(prompt, task="summary", json_mode=True)
+        summary_response = generate(prompt, task="summary", schema=ARTICLE_SUMMARY_SCHEMA)
         langfuse_context.update_current_observation(output=summary_response)
         
         if not summary_response:
@@ -731,6 +772,55 @@ Article content:
         return None
 
 
+ARTICLE_DEEP_POLITICS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "core_argument": {"type": "string"},
+        "how_it_frames_the_issue": {"type": "string"},
+        "what_evidence_it_relies_on": {"type": "string"},
+        "what_to_question_or_watch": {"type": "string"},
+    },
+    "required": [
+        "core_argument",
+        "how_it_frames_the_issue",
+        "what_evidence_it_relies_on",
+        "what_to_question_or_watch",
+    ],
+}
+
+ARTICLE_DEEP_SCIENCE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "what_the_article_says": {"type": "string"},
+        "technical_substance": {"type": "string"},
+        "why_this_matters": {"type": "string"},
+        "what_remains_uncertain": {"type": "string"},
+    },
+    "required": [
+        "what_the_article_says",
+        "technical_substance",
+        "why_this_matters",
+        "what_remains_uncertain",
+    ],
+}
+
+ARTICLE_DEEP_BUSINESS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "what_happened": {"type": "string"},
+        "what_is_driving_it": {"type": "string"},
+        "who_is_affected": {"type": "string"},
+        "what_to_watch_next": {"type": "string"},
+    },
+    "required": [
+        "what_happened",
+        "what_is_driving_it",
+        "who_is_affected",
+        "what_to_watch_next",
+    ],
+}
+
+
 @observe()
 def generate_article_deep_analysis(article):
     """
@@ -744,59 +834,57 @@ def generate_article_deep_analysis(article):
         return None
 
     analysis_type = detect_analysis_type(article)
-    clean_content = strip_html(article.content)[:3500].strip()
+    clean_content = strip_html(article.content)[:ARTICLE_SUMMARY_MAX_CHARS].strip()
     if not clean_content:
         return None
 
+    analysis_schema = None
     if analysis_type == "politics":
+        analysis_schema = ARTICLE_DEEP_POLITICS_SCHEMA
         prompt = f"""You are a political analyst writing a focused article analysis.
 
-Analyze this political article. The analysis MUST be returned as a JSON object with the following keys:
-- "core_argument": [Write 2-3 sentences summarizing the article's main thesis and factual basis]
-- "how_it_frames_the_issue": [Describe what assumptions, emphasis, or political framing the piece uses]
-- "what_evidence_it_relies_on": [Identify the main facts, sources, or claims used to support the argument]
-- "what_to_question_or_watch": [Note potential blind spots, unresolved questions, or what future reporting should clarify]
+Analyze this political article covering:
+- core_argument: main thesis and factual basis (2-3 sentences)
+- how_it_frames_the_issue: assumptions, emphasis, or political framing
+- what_evidence_it_relies_on: main facts, sources, or claims
+- what_to_question_or_watch: blind spots, unresolved questions, or future reporting needs
 
 Rules:
-- The brackets [ ] are instructions for you. Replace them with your actual analysis.
 - Stay analytical, not partisan
-- Return ONLY valid JSON.
 
 Article title: {article.title}
 
 Article content:
 {clean_content}"""
     elif analysis_type == "science":
+        analysis_schema = ARTICLE_DEEP_SCIENCE_SCHEMA
         prompt = f"""You are a science and technology journalist writing a technical analysis.
 
-Analyze this article. The analysis MUST be returned as a JSON object with the following keys:
-- "what_the_article_says": [Write 2-3 sentences summarizing the core finding or development]
-- "technical_substance": [Describe the key mechanism, data, or technical concept explained in the article]
-- "why_this_matters": [Explain what the development changes in practical or scientific terms]
-- "what_remains_uncertain": [Note limitations, caveats, unanswered questions, or hype risk]
+Analyze this article covering:
+- what_the_article_says: core finding or development (2-3 sentences)
+- technical_substance: key mechanism, data, or technical concept
+- why_this_matters: practical or scientific significance
+- what_remains_uncertain: limitations, caveats, unanswered questions, or hype risk
 
 Rules:
-- The brackets [ ] are instructions for you. Replace them with your actual analysis.
 - Prioritize clarity and technical accuracy
-- Return ONLY valid JSON.
 
 Article title: {article.title}
 
 Article content:
 {clean_content}"""
     elif analysis_type == "business":
+        analysis_schema = ARTICLE_DEEP_BUSINESS_SCHEMA
         prompt = f"""You are a financial journalist writing a markets and business analysis.
 
-Analyze this article. The analysis MUST be returned as a JSON object with the following keys:
-- "what_happened": [Write 2-3 sentences summarizing the business or market event]
-- "what_is_driving_it": [Explain the main financial, operational, or policy factors behind it]
-- "who_is_affected": [Identify the companies, sectors, investors, or consumers most affected]
-- "what_to_watch_next": [Note risks, catalysts, or decision points that matter going forward]
+Analyze this article covering:
+- what_happened: business or market event (2-3 sentences)
+- what_is_driving_it: main financial, operational, or policy factors
+- who_is_affected: companies, sectors, investors, or consumers most affected
+- what_to_watch_next: risks, catalysts, or decision points going forward
 
 Rules:
-- The brackets [ ] are instructions for you. Replace them with your actual analysis.
 - Focus on economic significance, not fluff
-- Return ONLY valid JSON.
 
 Article title: {article.title}
 
@@ -812,7 +900,7 @@ Article content:
 
     try:
         import json
-        analysis_response = generate(prompt, task="report", json_mode=True)
+        analysis_response = generate(prompt, task="report", schema=analysis_schema)
         langfuse_context.update_current_observation(output=analysis_response)
         
         if not analysis_response:

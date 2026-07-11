@@ -134,9 +134,8 @@ def classify_article(title, content_snippet=""):
                 topic_lines.append(f"- {t}")
         topics_list = "\n".join(topic_lines)
 
+    # Static prefix first so consecutive classify calls share KV cache.
     prompt = f"""Classify this article into categories.
-
-Article: "{text}"
 
 Categories:
 {topics_list}
@@ -147,39 +146,52 @@ Rules:
 - Maximum 2 categories.
 - If no categories apply, use "Other".
 
-You MUST return a JSON object with a single key "categories" containing a list of strings."""
+Article:
+"{text}"
+"""
+
+    category_enum = [t for t in valid_topics if t != "Other"] + ["Other"]
+    schema = {
+        "type": "object",
+        "properties": {
+            "categories": {
+                "type": "array",
+                "items": {"type": "string", "enum": category_enum},
+                "maxItems": 2,
+            }
+        },
+        "required": ["categories"],
+    }
 
     langfuse_context.update_current_observation(
         input=prompt
     )
     try:
-        result = generate(prompt, task="classification", json_mode=True)
+        result = generate(prompt, task="classification", schema=schema)
         if not result:
             return ["Other"]
-            
+
         langfuse_context.update_current_observation(
             output=result
         )
 
         import json
-        lines = []
+
         try:
             data = json.loads(result)
-            if "categories" in data and isinstance(data["categories"], list):
-                lines = [str(x).strip() for x in data["categories"]]
-            else:
-                lines = [result]
+            categories = data.get("categories", [])
+            if not isinstance(categories, list):
+                categories = []
         except json.JSONDecodeError:
-            lines = [line.strip() for line in result.splitlines() if line.strip()]
+            categories = []
 
         matched = []
-        for line in lines:
-            for topic in _match_topics_from_line(line, valid_topics):
-                if topic not in matched:
-                    matched.append(topic)
+        for cat in categories:
+            cat = str(cat).strip()
+            if cat in valid_topics and cat not in matched:
+                matched.append(cat)
 
         if matched:
-            # Remove "Other" if any real categories were found
             matched = [t for t in matched if t != "Other"]
             if matched:
                 logger.info(f"  [Classifier] Tagged as: {', '.join(matched)}")

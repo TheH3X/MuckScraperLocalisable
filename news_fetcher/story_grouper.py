@@ -499,6 +499,18 @@ def get_candidate_stories(article_title, recent_stories, max_candidates=5):
     return [story for _, story in scored[:max_candidates]]
 
 
+MATCH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "match_id": {
+            "type": "integer",
+            "description": "Story number (1-based) or 0 if no match",
+        }
+    },
+    "required": ["match_id"],
+}
+
+
 def build_match_prompt(article_title, story_list, article_content=None):
     article_block = f'Article title: "{article_title}"'
     if article_content:
@@ -506,14 +518,10 @@ def build_match_prompt(article_title, story_list, article_content=None):
         if snippet:
             article_block += f"\nArticle context: {snippet}"
 
+    # Static prefix first so consecutive grouping calls share KV cache.
     return f"""You are a news editor grouping articles into stories.
 
-{article_block}
-
-Existing stories:
-{story_list}
-
-Does this article cover the same specific event or ongoing situation as any of the stories listed above?
+Does this article cover the same specific event or ongoing situation as any of the stories listed below?
 
 Rules:
 - Match if they are clearly about the same specific event or continuing storyline, even when the new article is an update, explainer, reaction, evacuation step, casualty update, or human-interest angle on that same event
@@ -524,10 +532,13 @@ Rules:
 - If it matches, the match_id should be the number of the matching story
 - If it does not match any story, the match_id should be 0
 
-You MUST return a JSON object with a single key "match_id" containing the integer ID.
-
 Examples of correct NON-matches (match_id 0): same broad topic but different events;
-same person in unrelated stories; analysis/opinion not anchored to the listed event."""
+same person in unrelated stories; analysis/opinion not anchored to the listed event.
+
+Existing stories:
+{story_list}
+
+{article_block}"""
 
 
 @observe()
@@ -549,7 +560,7 @@ def ask_ollama_for_match(article_title, candidate_stories, article_content=None,
         input=prompt
     )
     try:
-        result = generate(prompt, task="classification", json_mode=True)
+        result = generate(prompt, task="classification", schema=MATCH_SCHEMA)
         if not result:
             return None
             

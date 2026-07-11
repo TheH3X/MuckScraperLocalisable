@@ -9,6 +9,19 @@ from langfuse.decorators import observe, langfuse_context
 from news_fetcher.llm_client import generate
 
 logger = logging.getLogger(__name__)
+
+HEADLINE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "headline": {
+            "type": "string",
+            "description": "Wire service headline, max 15 words",
+        }
+    },
+    "required": ["headline"],
+}
+
+
 @observe()
 def generate_story_headline(story):
     """
@@ -28,10 +41,8 @@ def generate_story_headline(story):
         f"- {article.title}" for article in story.articles[:10]
     )
 
+    # Static prefix first so consecutive headline calls share KV cache.
     prompt = f"""You are a wire service editor writing a single headline.
-
-Below are multiple news articles covering the same story:
-{titles}
 
 Write ONE headline for this story in wire service style.
 
@@ -42,14 +53,15 @@ Rules:
 - No punctuation at the end
 - Do not include source names or outlet names
 
-Return the result as a JSON object with a single key "headline" containing the text."""
+Articles covering the same story:
+{titles}"""
 
     langfuse_context.update_current_observation(
         input=prompt
     )
     try:
         import json
-        headline_response = generate(prompt, task="headline", json_mode=True)
+        headline_response = generate(prompt, task="headline", schema=HEADLINE_SCHEMA)
         if not headline_response:
             return None
             
