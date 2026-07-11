@@ -829,6 +829,12 @@ def store_articles(articles_data, topic_name, provider=None, progress_cb=None):
         if story not in recent_stories:
             recent_stories.append(story)
 
+        # Tag with the fetch topic so sidebar filters match scheduled/manual fetches
+        if topic_name and topic_name != "Custom":
+            fetch_topic = get_or_create_topic(topic_name)
+            if fetch_topic not in story.topics:
+                story.topics.append(fetch_topic)
+
         # Classify article into topics via Ollama
         from aggregator.models import Topic as TopicModel
         classified_topic_names = classify_article(title, content)

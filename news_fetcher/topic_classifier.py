@@ -1,6 +1,7 @@
 # muckscraperHeadlinesGoogleNEW/news_fetcher/topic_classifier.py
 # news_fetcher/topic_classifier.py
 import os
+import re
 import logging
 from langfuse import Langfuse
 from langfuse.decorators import observe, langfuse_context
@@ -55,6 +56,31 @@ def get_topic_hints():
     return hints
 
 
+def _match_topics_from_line(line, valid_topics):
+    """Match a classifier output line to known topic names."""
+    line = line.strip()
+    if not line:
+        return []
+
+    matched = []
+    parts = [line] + [p.strip() for p in re.split(r"[,;/]", line) if p.strip()]
+
+    for part in parts:
+        part_lower = part.lower()
+        for valid in valid_topics:
+            if valid in matched:
+                continue
+            valid_lower = valid.lower()
+            if part_lower == valid_lower:
+                matched.append(valid)
+            elif len(valid) <= 3 and re.search(
+                r"\b" + re.escape(valid) + r"\b", part, re.IGNORECASE
+            ):
+                matched.append(valid)
+
+    return matched
+
+
 @observe()
 def classify_article(title, content_snippet=""):
     """
@@ -88,7 +114,7 @@ def classify_article(title, content_snippet=""):
             topic_lines.append(f"- {t}")
     topics_list = "\n".join(topic_lines)
 
-    prompt = f"""Classify this article into categories. Respond with ONLY a JSON object.
+    prompt = f"""Classify this article into categories.
 
 Article: "{text}"
 
@@ -97,11 +123,11 @@ Categories:
 - Other
 
 Rules:
-- Use EXACT category names only
-- Maximum 2 categories
-- If none apply, use "Other"
+- Use EXACT category names only from the list above.
+- Maximum 2 categories.
+- If no categories apply, use "Other".
 
-{{"categories": ["Category1"]}}"""
+You MUST return a JSON object with a single key "categories" containing a list of strings."""
 
     langfuse_context.update_current_observation(
         input=prompt
@@ -128,10 +154,9 @@ Rules:
 
         matched = []
         for line in lines:
-            for valid in valid_topics:
-                if valid.lower() in line.lower():
-                    if valid not in matched:
-                        matched.append(valid)
+            for topic in _match_topics_from_line(line, valid_topics):
+                if topic not in matched:
+                    matched.append(topic)
 
         if matched:
             # Remove "Other" if any real categories were found

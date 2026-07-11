@@ -62,6 +62,10 @@ def bootstrap_admin():
         db.session.commit()
         print(f"Admin user '{username}' {action}.")
 
+        from seed_topics import run as seed_topics
+        seed_topics()
+        print("Topics seeded.")
+
 
 if __name__ == "__main__":
     try:

@@ -715,6 +715,14 @@ def run_all_fetches(run_full_pipeline=True):
     steps_completed = []
     
     SCHEDULED_FETCHES = get_scheduled_fetches()
+    if SCHEDULED_FETCHES:
+        summary = ", ".join(f"{f.name} ({f.fetch_mode})" for f in SCHEDULED_FETCHES)
+        logging.info("Scheduled fetches (%d): %s", len(SCHEDULED_FETCHES), summary)
+    else:
+        logging.warning(
+            "No topics with fetch_mode configured — scheduled topic fetches will be skipped. "
+            "Run seed_topics.py or restart the app container to seed topics."
+        )
     steps_remaining = [f"Fetching: {f.display_label}" for f in SCHEDULED_FETCHES]
     steps_remaining.append("Fetching RSS feeds")
     
