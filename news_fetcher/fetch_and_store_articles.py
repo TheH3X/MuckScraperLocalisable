@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from news_fetcher.topic_classifier import classify_article
 from news_fetcher.headline_generator import generate_story_headline, generate_missing_headlines
 import logging
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 logger = logging.getLogger(__name__)
@@ -453,6 +454,17 @@ def append_topic_if_missing(parent, topic):
     parent.topics.append(topic)
 
 
+def _is_duplicate_article_url_error(exc):
+    orig = getattr(exc, "orig", None)
+    diag = getattr(orig, "diag", None)
+    if diag is not None and getattr(diag, "constraint_name", None) == "articles_url_key":
+        return True
+    message = str(exc).lower()
+    return "articles_url_key" in message or (
+        "duplicate key" in message and "(url)=" in message
+    )
+
+
 def normalize_url(url):
     """Strip query parameters from URL to detect duplicates."""
     try:
@@ -732,6 +744,7 @@ def store_articles(articles_data, topic_name, provider=None, progress_cb=None):
     """
     metrics = empty_store_metrics(topic_name, provider=provider, input_articles=len(articles_data))
     stories_touched = set()
+    seen_urls = set()
 
     # Pre-fetch recent stories once for the whole batch. This is the hottest
     # fetch path: every new article compares against this pool, so keep the
@@ -791,6 +804,12 @@ def store_articles(articles_data, topic_name, provider=None, progress_cb=None):
             logger.debug(f"Skipping duplicate URL: {title}")
             metrics["skipped"]["duplicate_url"] += 1
             continue
+
+        if url in seen_urls:
+            logger.debug(f"Skipping duplicate URL in batch: {title}")
+            metrics["skipped"]["duplicate_url"] += 1
+            continue
+        seen_urls.add(url)
 
         # Check for Title + Source duplicate (catch same article, different URL)
         # First get/create outlet to have the ID
@@ -932,19 +951,29 @@ def store_articles(articles_data, topic_name, provider=None, progress_cb=None):
             grouping_needs_review=bool(getattr(match, "needs_review", False)),
         )
 
-        db.session.add(new_article)
-        # IMPORTANT: Append to story.articles so it's visible to find_matching_story
-        # for subsequent articles in this SAME loop iteration.
-        story.articles.append(new_article)
+        try:
+            with db.session.begin_nested():
+                db.session.add(new_article)
+                # IMPORTANT: Append to story.articles so it's visible to find_matching_story
+                # for subsequent articles in this SAME loop iteration.
+                story.articles.append(new_article)
 
-        # Tag article with same topics as story
-        for t in story.topics:
-            append_topic_if_missing(new_article, t)
+                # Tag article with same topics as story
+                for t in story.topics:
+                    append_topic_if_missing(new_article, t)
 
-        # Single-article stories keep headline = None so UI falls back to title.
-        # Multi-article story headlines are now generated in a batch pass by the scheduler.
-        if len(story.articles) < 2:
-            story.headline = None
+                # Single-article stories keep headline = None so UI falls back to title.
+                # Multi-article story headlines are now generated in a batch pass by the scheduler.
+                if len(story.articles) < 2:
+                    story.headline = None
+                db.session.flush()
+        except IntegrityError as exc:
+            if _is_duplicate_article_url_error(exc):
+                logger.info("  Skipping duplicate URL (constraint): %s", url)
+                metrics["skipped"]["duplicate_url"] += 1
+                continue
+            raise
+
         metrics["stored"] += 1
         metrics["scrape_statuses"][scrape_result.status] = (
             metrics["scrape_statuses"].get(scrape_result.status, 0) + 1
@@ -954,7 +983,18 @@ def store_articles(articles_data, topic_name, provider=None, progress_cb=None):
         bias_source = outlet.bias_source or "unrated"
         metrics["bias_sources"][bias_source] = metrics["bias_sources"].get(bias_source, 0) + 1
 
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError as exc:
+        if _is_duplicate_article_url_error(exc):
+            db.session.rollback()
+            logger.warning(
+                "Duplicate article URL blocked batch commit for topic=%s; rolled back store pass.",
+                topic_name,
+            )
+            metrics["stored"] = 0
+            return metrics
+        raise
     metrics["stories_touched"] = len(stories_touched)
     logger.info(
         "Stored %s new articles for topic: %s (provider=%s, skipped=%s)",
