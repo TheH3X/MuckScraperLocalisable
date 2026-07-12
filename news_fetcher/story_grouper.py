@@ -137,6 +137,43 @@ def strip_to_snippet(html_content, max_chars=300):
     return text[:max_chars]
 
 
+def story_context_snippet(story, max_chars_each=220):
+    """
+    Representative content excerpt(s) shown to the LLM for a candidate story.
+
+    For a story with only one or two members this is just the first
+    article's snippet, as before. For stories that have already accumulated
+    several members, sample the earliest, a middle, and the latest article
+    instead of always the first — this lets the LLM see whether the group is
+    genuinely one throughline event (examples closely related) or has
+    drifted into a broad-topic blob (examples cover unrelated angles), which
+    it should then reject rather than confirm.
+    """
+    articles = [a for a in (getattr(story, "articles", None) or []) if a.content]
+    if not articles:
+        return ""
+    if len(articles) <= 2:
+        return strip_to_snippet(articles[0].content, max_chars=max_chars_each)
+
+    def _sort_key(a):
+        return getattr(a, "date", None) or getattr(a, "fetched_at", None)
+
+    sortable = [a for a in articles if _sort_key(a) is not None]
+    ordered = sorted(sortable, key=_sort_key) if sortable else articles
+
+    picks = [ordered[0], ordered[len(ordered) // 2], ordered[-1]]
+    seen_ids = set()
+    lines = []
+    for i, article in enumerate(picks, 1):
+        if id(article) in seen_ids:
+            continue
+        seen_ids.add(id(article))
+        snippet = strip_to_snippet(article.content, max_chars=max_chars_each)
+        if snippet:
+            lines.append(f'Member {i} ("{article.title}"): {snippet}')
+    return "\n   ".join(lines)
+
+
 def strip_video_prefix(title):
     """
     Remove common video/media prefixes that distort embeddings.
@@ -203,7 +240,37 @@ def shared_title_tokens(title_a, title_b):
     return normalize_title_tokens(title_a) & normalize_title_tokens(title_b)
 
 
+def titles_are_exact_duplicates(article_title, story_title):
+    """
+    Very strict near-verbatim check, used only to skip the LLM confirmation
+    call outright (e.g. the same wire story republished under a near-identical
+    headline). Titles that merely share several words — including generic
+    brand/topic terms like "Samsung", "Galaxy", "AI" — must NOT pass here;
+    they should instead be routed to LLM review (see titles_share_tokens /
+    the overlap-candidate path in find_matching_story_with_metadata).
+    """
+    article_tokens = normalize_title_tokens(article_title)
+    story_tokens = normalize_title_tokens(story_title)
+    if not article_tokens or not story_tokens:
+        return False
+
+    shared = article_tokens & story_tokens
+    if len(shared) < 4:
+        return False
+
+    overlap = len(shared) / min(len(article_tokens), len(story_tokens))
+    # Require the two titles to be almost entirely the same set of words.
+    return overlap >= 0.9
+
+
 def titles_are_near_duplicates(article_title, story_title):
+    """
+    Looser near-duplicate check. NOT used for the grouper's no-LLM fast path
+    (see titles_are_exact_duplicates) — this remains available for lower-risk,
+    display-only callers such as edition duplicate-story detection, where a
+    false positive just hides a redundant-looking headline rather than
+    merging article data into the wrong story.
+    """
     article_tokens = normalize_title_tokens(article_title)
     story_tokens = normalize_title_tokens(story_title)
     if not article_tokens or not story_tokens:
@@ -258,7 +325,11 @@ def find_matching_story_with_metadata(article_title, article_embedding, recent_s
     from sqlalchemy.orm.exc import ObjectDeletedError
 
     # Title scan (Python): pure string ops, fast regardless of pool size.
-    # Finds near-duplicate titles and keyword overlap candidates.
+    # Only near-VERBATIM titles (titles_are_exact_duplicates) skip the LLM
+    # check entirely — anything looser (e.g. titles that merely share a
+    # brand/topic word like "Samsung" or "AI") is routed to LLM review below
+    # instead of being auto-merged, since generic-word overlap is exactly
+    # what caused unrelated articles to be grouped into one blob.
     for story in recent_stories:
         try:
             candidate_titles = [story.title]
@@ -269,7 +340,7 @@ def find_matching_story_with_metadata(article_title, article_embedding, recent_s
             for candidate_title in candidate_titles:
                 shared = shared_title_tokens(article_title, candidate_title)
                 max_shared = max(max_shared, len(shared))
-                if titles_are_near_duplicates(article_title, candidate_title):
+                if titles_are_exact_duplicates(article_title, candidate_title):
                     best_title_match = story
                     break
             if best_title_match:
@@ -280,7 +351,7 @@ def find_matching_story_with_metadata(article_title, article_embedding, recent_s
             continue
 
     if best_title_match:
-        logger.info(f"  [Grouper] Matched to '{best_title_match.title}' via title overlap")
+        logger.info(f"  [Grouper] Matched to '{best_title_match.title}' via exact title duplicate")
         return MatchDecision(
             story=best_title_match,
             method="title_overlap",
@@ -300,12 +371,7 @@ def find_matching_story_with_metadata(article_title, article_embedding, recent_s
             if len(unique_candidates) == 3:
                 break
 
-        story_snippets = []
-        for story in unique_candidates:
-            snippet = ""
-            if story.articles:
-                snippet = strip_to_snippet(story.articles[0].content)
-            story_snippets.append(snippet)
+        story_snippets = [story_context_snippet(story) for story in unique_candidates]
 
         ollama_decision = ask_ollama_for_match(
             article_title,
@@ -327,6 +393,13 @@ def find_matching_story_with_metadata(article_title, article_embedding, recent_s
 
     # Embedding search: pgvector query when db is available (large pools),
     # Python cosine scan as fallback for small candidate sets or if pgvector fails.
+    #
+    # Uses AVERAGE similarity across a story's member articles (mean-linkage),
+    # not the single closest member (single-linkage/max). Single-linkage lets
+    # one loosely-related "bridge" article drag in more and more unrelated
+    # articles over time (classic clustering chaining) — averaging keeps the
+    # score representative of the story as a whole, so a growing blob of
+    # only-tangentially-related articles stops looking like a strong match.
     embedding_match_done = False
 
     if db is not None and recent_stories:
@@ -339,12 +412,12 @@ def find_matching_story_with_metadata(article_title, article_embedding, recent_s
                 rows = db.session.execute(
                     db.text("""
                         SELECT a.story_id,
-                               1 - MIN(a.embedding <=> (:emb)::vector) AS best_sim
+                               AVG(1 - (a.embedding <=> (:emb)::vector)) AS avg_sim
                         FROM articles a
                         WHERE a.story_id = ANY((:ids)::int[])
                           AND a.embedding IS NOT NULL
                         GROUP BY a.story_id
-                        ORDER BY best_sim DESC
+                        ORDER BY avg_sim DESC
                         LIMIT 5
                     """),
                     {"emb": emb_str, "ids": ids_pg},
@@ -364,73 +437,82 @@ def find_matching_story_with_metadata(article_title, article_embedding, recent_s
                 articles = story.articles
                 if not articles:
                     continue
-                best_story_score = 0.0
+                scores = []
                 for article in articles:
                     try:
                         if article.embedding is not None:
-                            score = cosine_similarity(article_embedding, article.embedding)
-                            if score > best_story_score:
-                                best_story_score = score
+                            scores.append(cosine_similarity(article_embedding, article.embedding))
                     except ObjectDeletedError:
                         continue
-                if best_story_score > best_global_score:
-                    best_global_score = best_story_score
+                if not scores:
+                    continue
+                avg_story_score = sum(scores) / len(scores)
+                if avg_story_score > best_global_score:
+                    best_global_score = avg_story_score
                     best_story = story
             except ObjectDeletedError:
                 continue
 
-    if best_global_score >= SIMILARITY_THRESHOLD and best_story:
-        logger.info(f"  [Grouper] Matched to '{best_story.title}' (similarity: {best_global_score:.3f})")
-        return MatchDecision(
-            story=best_story,
-            method="embedding_strong",
-            confidence=best_global_score,
-            candidate_story_ids=_candidate_story_ids([best_story]),
-        )
-
-    if best_global_score >= LOWER_THRESHOLD and best_story and OLLAMA_HOST:
-        embedding_review_threshold = (
-            EMBEDDING_REVIEW_AFTER_TITLE_REJECT
-            if title_overlap_ollama_rejected
-            else LOWER_THRESHOLD
-        )
-        if best_global_score < embedding_review_threshold:
-            logger.info(
-                "  [Grouper] Skipping embedding review (score: %.3f < %.3f after title-overlap reject)",
-                best_global_score,
-                embedding_review_threshold,
-            )
-        else:
-            logger.info(f"  [Grouper] Ambiguous match (score: {best_global_score:.3f}), asking Ollama...")
-            logger.info(f"  [Grouper] article_content present: {bool(article_content)}, length: {len(article_content) if article_content else 0}")
-
-            story_snippet = ""
-            if best_story.articles:
-                story_snippet = strip_to_snippet(best_story.articles[0].content)
-
-            ollama_decision = ask_ollama_for_match(
-                article_title, [best_story],
-                article_content=article_content,
-                story_snippets=[story_snippet]
-            )
-            if ollama_decision:
-                logger.info(f"  [Grouper] Ollama confirmed match to '{best_story.title}'")
+    if best_global_score >= LOWER_THRESHOLD and best_story:
+        if not OLLAMA_HOST:
+            # No LLM available to confirm the match — only auto-merge when
+            # the score is near-certain; anything softer creates a new story
+            # rather than risk an unreviewed over-merge.
+            if best_global_score >= SIMILARITY_THRESHOLD:
+                logger.info(f"  [Grouper] Matched to '{best_story.title}' (similarity: {best_global_score:.3f}, no LLM available)")
                 return MatchDecision(
-                    story=ollama_decision,
-                    method="embedding_review",
+                    story=best_story,
+                    method="embedding_strong",
                     confidence=best_global_score,
                     candidate_story_ids=_candidate_story_ids([best_story]),
-                    needs_review=True,
+                )
+        else:
+            embedding_review_threshold = (
+                EMBEDDING_REVIEW_AFTER_TITLE_REJECT
+                if title_overlap_ollama_rejected
+                else LOWER_THRESHOLD
+            )
+            if best_global_score < embedding_review_threshold:
+                logger.info(
+                    "  [Grouper] Skipping embedding review (score: %.3f < %.3f after title-overlap reject)",
+                    best_global_score,
+                    embedding_review_threshold,
                 )
             else:
-                logger.info(f"  [Grouper] Ollama rejected match, creating new story")
-                return MatchDecision(
-                    story=None,
-                    method="embedding_review_rejected",
-                    confidence=best_global_score,
-                    candidate_story_ids=_candidate_story_ids([best_story]),
-                    needs_review=True,
+                # Always confirm with the LLM, even for very high embedding
+                # scores: two articles can be highly similar simply because
+                # they are generic pieces on the same broad topic (e.g. two
+                # unrelated "explainer" articles about AI), not because they
+                # cover the same specific event. Never auto-merge on
+                # embedding score alone when an LLM check is available.
+                logger.info(f"  [Grouper] Confirming match (score: {best_global_score:.3f}) via Ollama...")
+                logger.info(f"  [Grouper] article_content present: {bool(article_content)}, length: {len(article_content) if article_content else 0}")
+
+                story_snippet = story_context_snippet(best_story)
+
+                ollama_decision = ask_ollama_for_match(
+                    article_title, [best_story],
+                    article_content=article_content,
+                    story_snippets=[story_snippet]
                 )
+                if ollama_decision:
+                    logger.info(f"  [Grouper] Ollama confirmed match to '{best_story.title}'")
+                    return MatchDecision(
+                        story=ollama_decision,
+                        method="embedding_review",
+                        confidence=best_global_score,
+                        candidate_story_ids=_candidate_story_ids([best_story]),
+                        needs_review=True,
+                    )
+                else:
+                    logger.info(f"  [Grouper] Ollama rejected match, creating new story")
+                    return MatchDecision(
+                        story=None,
+                        method="embedding_review_rejected",
+                        confidence=best_global_score,
+                        candidate_story_ids=_candidate_story_ids([best_story]),
+                        needs_review=True,
+                    )
 
     logger.info(f"  [Grouper] No match found (best score: {best_global_score:.3f}), creating new story")
     return MatchDecision(
@@ -525,15 +607,17 @@ Does this article cover the same specific event or ongoing situation as any of t
 
 Rules:
 - Match if they are clearly about the same specific event or continuing storyline, even when the new article is an update, explainer, reaction, evacuation step, casualty update, or human-interest angle on that same event
-- Do not match just because they share a broad topic or the same company/person/country
+- Do not match just because they share a broad topic, industry, brand, or the same company/person/country. "Same topic" is NOT "same event": e.g. two different Samsung phone-leak stories, or two different AI product launches, are NOT the same story just because both are "Samsung" or "AI" news
+- General explainers, glossaries, listicles, retrospectives, "best of" roundups, or opinion/analysis pieces about a broad subject (e.g. "What is AI?", "History of the iPhone", "Best laptops of 2026") do NOT match a specific-event story unless the article is explicitly anchored to that exact event
+- Two generic/explainer articles about the same broad subject do NOT match each other either — each is its own non-event unless they cover the identical concrete thing (same report, same announcement, same incident)
 - Do not match if the stories contradict each other (e.g. "price drop" vs "price increase")
-- Do not match broad opinion or analysis to a news event unless it is explicitly anchored to that same concrete event or ongoing situation
-- Use the context snippets to distinguish between similar-sounding but different events
+- Use the context snippets (including any additional "Member" excerpts) to judge whether the existing story is really one throughline event; if the excerpts already look like unrelated angles on a broad topic, treat that as a broad topic, not an event, and do not add to it
 - If it matches, the match_id should be the number of the matching story
 - If it does not match any story, the match_id should be 0
 
 Examples of correct NON-matches (match_id 0): same broad topic but different events;
-same person in unrelated stories; analysis/opinion not anchored to the listed event.
+same person, company, or brand in unrelated stories; two unrelated general-explainer or
+opinion articles on the same subject; analysis/opinion not anchored to the listed event.
 
 Existing stories:
 {story_list}

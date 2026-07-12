@@ -1644,9 +1644,13 @@ def force_regroup_all():
         article.topics = [] # Clear in-memory topics to avoid IntegrityError on flush/commit
     db.session.flush()
 
-    # Clear junction tables first to avoid foreign key violations
+    # Clear junction/dependent tables first to avoid foreign key violations.
+    # edition_stories has no ON DELETE CASCADE, so a bulk Story delete fails
+    # without this; those rows would be meaningless after regroup anyway
+    # since story identities are being rebuilt from scratch.
     db.session.execute(db.text("DELETE FROM story_topics"))
     db.session.execute(db.text("DELETE FROM article_topics"))
+    db.session.execute(db.text("DELETE FROM edition_stories"))
     db.session.flush()
 
     # Delete all stories
