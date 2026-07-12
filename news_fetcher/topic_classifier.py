@@ -1,20 +1,40 @@
 # muckscraperHeadlinesGoogleNEW/news_fetcher/topic_classifier.py
 # news_fetcher/topic_classifier.py
 import os
+import re
 import logging
-from langfuse import Langfuse
+from news_fetcher.langfuse_client import langfuse
 from langfuse.decorators import observe, langfuse_context
 from news_fetcher.llm_client import generate
 
 logger = logging.getLogger(__name__)
-
-langfuse = Langfuse(
-    public_key=os.environ.get("LANGFUSE_PUBLIC_KEY", ""),
-    secret_key=os.environ.get("LANGFUSE_SECRET_KEY", ""),
-    host=os.environ.get("LANGFUSE_HOST", "http://localhost:3000")
-)
-
 from aggregator.country_config import get_config, get_topics
+
+_cfg = get_config()
+
+_CLASSIFICATION_BATCH_CACHE = {}
+_TRUSTED_FETCH_TOPIC_SKIP = frozenset({"Custom", "Global News"})
+
+
+def begin_classification_batch():
+    """Cache topic metadata for classify_article calls in one ingest batch."""
+    valid_topics = get_valid_topics()
+    topic_hints = get_topic_hints()
+    topic_lines = []
+    for t in valid_topics:
+        if t == "Other":
+            continue
+        hint = topic_hints.get(t)
+        if hint:
+            topic_lines.append(f"- {t}: {hint}")
+        else:
+            topic_lines.append(f"- {t}")
+    _CLASSIFICATION_BATCH_CACHE["valid_topics"] = valid_topics
+    _CLASSIFICATION_BATCH_CACHE["topics_list"] = "\n".join(topic_lines)
+
+
+def clear_classification_batch():
+    _CLASSIFICATION_BATCH_CACHE.clear()
 
 
 def get_valid_topics():
@@ -53,6 +73,31 @@ def get_topic_hints():
     return hints
 
 
+def _match_topics_from_line(line, valid_topics):
+    """Match a classifier output line to known topic names."""
+    line = line.strip()
+    if not line:
+        return []
+
+    matched = []
+    parts = [line] + [p.strip() for p in re.split(r"[,;/]", line) if p.strip()]
+
+    for part in parts:
+        part_lower = part.lower()
+        for valid in valid_topics:
+            if valid in matched:
+                continue
+            valid_lower = valid.lower()
+            if part_lower == valid_lower:
+                matched.append(valid)
+            elif len(valid) <= 3 and re.search(
+                r"\b" + re.escape(valid) + r"\b", part, re.IGNORECASE
+            ):
+                matched.append(valid)
+
+    return matched
+
+
 @observe()
 def classify_article(title, content_snippet=""):
     """
@@ -70,69 +115,83 @@ def classify_article(title, content_snippet=""):
         if clean:
             text += f"\n{clean}"
 
-    country_name = get_config().get("country_name", "the given country")
-    valid_topics = get_valid_topics()
-    topic_hints = get_topic_hints()
+    country_name = _cfg.get("country_name", "the given country")
+    cache = _CLASSIFICATION_BATCH_CACHE
+    if cache.get("topics_list") and cache.get("valid_topics"):
+        valid_topics = cache["valid_topics"]
+        topics_list = cache["topics_list"]
+    else:
+        valid_topics = get_valid_topics()
+        topic_hints = get_topic_hints()
+        topic_lines = []
+        for t in valid_topics:
+            if t == "Other":
+                continue
+            hint = topic_hints.get(t)
+            if hint:
+                topic_lines.append(f"- {t}: {hint}")
+            else:
+                topic_lines.append(f"- {t}")
+        topics_list = "\n".join(topic_lines)
 
-    # Build the topics list
-    topic_lines = []
-    for t in valid_topics:
-        if t == "Other":
-            continue
-        hint = topic_hints.get(t)
-        if hint:
-            topic_lines.append(f"- {t}: {hint}")
-        else:
-            topic_lines.append(f"- {t}")
-    topics_list = "\n".join(topic_lines)
-
-    prompt = f"""Classify this article into categories. Respond with ONLY a JSON object.
-
-Article: "{text}"
+    # Static prefix first so consecutive classify calls share KV cache.
+    prompt = f"""Classify this article into categories.
 
 Categories:
 {topics_list}
 - Other
 
 Rules:
-- Use EXACT category names only
-- Maximum 2 categories
-- If none apply, use "Other"
+- Use EXACT category names only from the list above.
+- Maximum 2 categories.
+- If no categories apply, use "Other".
 
-{{"categories": ["Category1"]}}"""
+Article:
+"{text}"
+"""
+
+    category_enum = [t for t in valid_topics if t != "Other"] + ["Other"]
+    schema = {
+        "type": "object",
+        "properties": {
+            "categories": {
+                "type": "array",
+                "items": {"type": "string", "enum": category_enum},
+                "maxItems": 2,
+            }
+        },
+        "required": ["categories"],
+    }
 
     langfuse_context.update_current_observation(
         input=prompt
     )
     try:
-        result = generate(prompt, task="classification", json_mode=True)
+        result = generate(prompt, task="classification", schema=schema)
         if not result:
             return ["Other"]
-            
+
         langfuse_context.update_current_observation(
             output=result
         )
 
         import json
-        lines = []
+
         try:
             data = json.loads(result)
-            if "categories" in data and isinstance(data["categories"], list):
-                lines = [str(x).strip() for x in data["categories"]]
-            else:
-                lines = [result]
+            categories = data.get("categories", [])
+            if not isinstance(categories, list):
+                categories = []
         except json.JSONDecodeError:
-            lines = [line.strip() for line in result.splitlines() if line.strip()]
+            categories = []
 
         matched = []
-        for line in lines:
-            for valid in valid_topics:
-                if valid.lower() in line.lower():
-                    if valid not in matched:
-                        matched.append(valid)
+        for cat in categories:
+            cat = str(cat).strip()
+            if cat in valid_topics and cat not in matched:
+                matched.append(cat)
 
         if matched:
-            # Remove "Other" if any real categories were found
             matched = [t for t in matched if t != "Other"]
             if matched:
                 logger.info(f"  [Classifier] Tagged as: {', '.join(matched)}")

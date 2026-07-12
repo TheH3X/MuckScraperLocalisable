@@ -2,17 +2,25 @@
 # news_fetcher/headline_generator.py
 import logging
 import os
-from langfuse import Langfuse
+from datetime import datetime
+
+from news_fetcher.langfuse_client import langfuse
 from langfuse.decorators import observe, langfuse_context
 from news_fetcher.llm_client import generate
 
 logger = logging.getLogger(__name__)
 
-langfuse = Langfuse(
-    public_key=os.environ.get("LANGFUSE_PUBLIC_KEY", ""),
-    secret_key=os.environ.get("LANGFUSE_SECRET_KEY", ""),
-    host=os.environ.get("LANGFUSE_HOST", "http://localhost:3000")
-)
+HEADLINE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "headline": {
+            "type": "string",
+            "description": "Wire service headline, max 15 words",
+        }
+    },
+    "required": ["headline"],
+}
+
 
 @observe()
 def generate_story_headline(story):
@@ -33,10 +41,8 @@ def generate_story_headline(story):
         f"- {article.title}" for article in story.articles[:10]
     )
 
+    # Static prefix first so consecutive headline calls share KV cache.
     prompt = f"""You are a wire service editor writing a single headline.
-
-Below are multiple news articles covering the same story:
-{titles}
 
 Write ONE headline for this story in wire service style.
 
@@ -45,21 +51,30 @@ Rules:
 - Maximum 15 words
 - Present tense, active voice
 - No punctuation at the end
-- DO NOT wrap the headline in quotes
 - Do not include source names or outlet names
-- DO NOT prefix the response with "Headline:" or "Here is the headline:". Begin immediately with the headline text."""
+
+Articles covering the same story:
+{titles}"""
 
     langfuse_context.update_current_observation(
         input=prompt
     )
     try:
-        headline = generate(prompt, task="headline", json_mode=False)
-        if not headline:
+        import json
+        headline_response = generate(prompt, task="headline", schema=HEADLINE_SCHEMA)
+        if not headline_response:
             return None
             
         langfuse_context.update_current_observation(
-            output=headline
+            output=headline_response
         )
+
+        try:
+            parsed = json.loads(headline_response)
+            headline = parsed.get("headline") or ""
+        except json.JSONDecodeError:
+            logger.warning(f"Failed to parse headline JSON: '{headline_response}'")
+            return None
 
         # Clean up common LLM artifacts
         headline = headline.strip('"\'').strip()
@@ -75,11 +90,13 @@ Rules:
         return None
 
 
-def generate_missing_headlines():
+def generate_missing_headlines(story_ids=None, recent_hours=24):
     """
     Find multi-article stories without headlines and generate them.
-    Called during Ollama catchup.
+    When story_ids is provided, only those stories are considered.
     """
+    from datetime import timedelta
+
     from aggregator import db
     from aggregator.models import Story
     from news_fetcher.llm_client import check_ollama_status
@@ -88,8 +105,18 @@ def generate_missing_headlines():
         logger.info("Ollama offline, skipping headline generation.")
         return
 
-    # Find multi-article stories without a headline
-    stories = Story.query.all()
+    query = Story.query
+    if story_ids:
+        story_ids = [story_id for story_id in story_ids if story_id]
+        if not story_ids:
+            logger.info("No touched stories supplied for headline generation.")
+            return
+        query = query.filter(Story.id.in_(story_ids))
+    else:
+        cutoff = datetime.utcnow() - timedelta(hours=recent_hours)
+        query = query.filter(Story.created_at >= cutoff)
+
+    stories = query.all()
     missing = [s for s in stories if len(s.articles) >= 2 and not s.headline]
 
     if not missing:

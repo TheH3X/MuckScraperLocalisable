@@ -380,6 +380,14 @@ def _guess_preset_key(name: str, label: str) -> str:
     return "default"
 
 
+CLASSIFIER_HINTS = {
+    "AI": (
+        "Articles about artificial intelligence, machine learning, LLMs, generative AI, "
+        "and AI policy/regulation — not general gadget/tech news unless AI is the main subject."
+    ),
+}
+
+
 def run():
     from aggregator.app import app
     from aggregator import db
@@ -445,6 +453,9 @@ def run():
                     existing.gnews_query = fetch.get("gnews_query")
                     existing.gnews_category = fetch.get("gnews_category")
                 existing.bias_mode = bias_modes.get(canonical_name, default_bias)
+                hint = CLASSIFIER_HINTS.get(canonical_name)
+                if hint and not existing.classifier_hint:
+                    existing.classifier_hint = hint
                 # Only set prompts if not already customised
                 if not existing.analysis_persona:
                     existing.analysis_persona = preset["analysis_persona"]
@@ -468,6 +479,7 @@ def run():
                     gnews_query=fetch.get("gnews_query") if fetch else None,
                     gnews_category=fetch.get("gnews_category") if fetch else None,
                     bias_mode=bias_modes.get(canonical_name, default_bias),
+                    classifier_hint=CLASSIFIER_HINTS.get(canonical_name),
                     analysis_persona=preset["analysis_persona"],
                     summary_prompt=preset["summary_prompt"],
                     deep_report_prompt=preset["deep_report_prompt"],

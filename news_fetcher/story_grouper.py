@@ -8,24 +8,20 @@ import unicodedata
 import numpy as np
 import logging
 from dataclasses import dataclass, field
-from langfuse import Langfuse
+from news_fetcher.langfuse_client import langfuse
 from langfuse.decorators import observe, langfuse_context
 from news_fetcher.llm_client import generate
 
 logger = logging.getLogger(__name__)
-
-langfuse = Langfuse(
-    public_key=os.environ.get("LANGFUSE_PUBLIC_KEY", ""),
-    secret_key=os.environ.get("LANGFUSE_SECRET_KEY", ""),
-    host=os.environ.get("LANGFUSE_HOST", "http://localhost:3000")
-)
-
 OLLAMA_HOST     = os.environ.get("OLLAMA_HOST", "")
 EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "nomic-embed-text")
 OLLAMA_TIMEOUT  = int(os.environ.get("OLLAMA_TIMEOUT", 600))
 
 SIMILARITY_THRESHOLD = 0.92
 LOWER_THRESHOLD = 0.68
+# After title-overlap Ollama rejects a match, require a stronger embedding score
+# before paying for a second confirmation call.
+EMBEDDING_REVIEW_AFTER_TITLE_REJECT = 0.80
 
 TITLE_STOPWORDS = {
     "a", "an", "the", "and", "or", "of", "for", "to", "in", "on", "at",
@@ -257,6 +253,7 @@ def find_matching_story_with_metadata(article_title, article_embedding, recent_s
     best_story = None
     best_title_match = None
     overlap_candidates = []
+    title_overlap_ollama_rejected = False
 
     from sqlalchemy.orm.exc import ObjectDeletedError
 
@@ -326,6 +323,7 @@ def find_matching_story_with_metadata(article_title, article_embedding, recent_s
                 candidate_story_ids=_candidate_story_ids(unique_candidates),
                 needs_review=True,
             )
+        title_overlap_ollama_rejected = True
 
     # Embedding search: pgvector query when db is available (large pools),
     # Python cosine scan as fallback for small candidate sets or if pgvector fails.
@@ -391,36 +389,48 @@ def find_matching_story_with_metadata(article_title, article_embedding, recent_s
         )
 
     if best_global_score >= LOWER_THRESHOLD and best_story and OLLAMA_HOST:
-        logger.info(f"  [Grouper] Ambiguous match (score: {best_global_score:.3f}), asking Ollama...")
-        logger.info(f"  [Grouper] article_content present: {bool(article_content)}, length: {len(article_content) if article_content else 0}")
-
-        story_snippet = ""
-        if best_story.articles:
-            story_snippet = strip_to_snippet(best_story.articles[0].content)
-
-        ollama_decision = ask_ollama_for_match(
-            article_title, [best_story],
-            article_content=article_content,
-            story_snippets=[story_snippet]
+        embedding_review_threshold = (
+            EMBEDDING_REVIEW_AFTER_TITLE_REJECT
+            if title_overlap_ollama_rejected
+            else LOWER_THRESHOLD
         )
-        if ollama_decision:
-            logger.info(f"  [Grouper] Ollama confirmed match to '{best_story.title}'")
-            return MatchDecision(
-                story=ollama_decision,
-                method="embedding_review",
-                confidence=best_global_score,
-                candidate_story_ids=_candidate_story_ids([best_story]),
-                needs_review=True,
+        if best_global_score < embedding_review_threshold:
+            logger.info(
+                "  [Grouper] Skipping embedding review (score: %.3f < %.3f after title-overlap reject)",
+                best_global_score,
+                embedding_review_threshold,
             )
         else:
-            logger.info(f"  [Grouper] Ollama rejected match, creating new story")
-            return MatchDecision(
-                story=None,
-                method="embedding_review_rejected",
-                confidence=best_global_score,
-                candidate_story_ids=_candidate_story_ids([best_story]),
-                needs_review=True,
+            logger.info(f"  [Grouper] Ambiguous match (score: {best_global_score:.3f}), asking Ollama...")
+            logger.info(f"  [Grouper] article_content present: {bool(article_content)}, length: {len(article_content) if article_content else 0}")
+
+            story_snippet = ""
+            if best_story.articles:
+                story_snippet = strip_to_snippet(best_story.articles[0].content)
+
+            ollama_decision = ask_ollama_for_match(
+                article_title, [best_story],
+                article_content=article_content,
+                story_snippets=[story_snippet]
             )
+            if ollama_decision:
+                logger.info(f"  [Grouper] Ollama confirmed match to '{best_story.title}'")
+                return MatchDecision(
+                    story=ollama_decision,
+                    method="embedding_review",
+                    confidence=best_global_score,
+                    candidate_story_ids=_candidate_story_ids([best_story]),
+                    needs_review=True,
+                )
+            else:
+                logger.info(f"  [Grouper] Ollama rejected match, creating new story")
+                return MatchDecision(
+                    story=None,
+                    method="embedding_review_rejected",
+                    confidence=best_global_score,
+                    candidate_story_ids=_candidate_story_ids([best_story]),
+                    needs_review=True,
+                )
 
     logger.info(f"  [Grouper] No match found (best score: {best_global_score:.3f}), creating new story")
     return MatchDecision(
@@ -489,6 +499,18 @@ def get_candidate_stories(article_title, recent_stories, max_candidates=5):
     return [story for _, story in scored[:max_candidates]]
 
 
+MATCH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "match_id": {
+            "type": "integer",
+            "description": "Story number (1-based) or 0 if no match",
+        }
+    },
+    "required": ["match_id"],
+}
+
+
 def build_match_prompt(article_title, story_list, article_content=None):
     article_block = f'Article title: "{article_title}"'
     if article_content:
@@ -496,14 +518,10 @@ def build_match_prompt(article_title, story_list, article_content=None):
         if snippet:
             article_block += f"\nArticle context: {snippet}"
 
+    # Static prefix first so consecutive grouping calls share KV cache.
     return f"""You are a news editor grouping articles into stories.
 
-{article_block}
-
-Existing stories:
-{story_list}
-
-Does this article cover the same specific event or ongoing situation as any of the stories listed above?
+Does this article cover the same specific event or ongoing situation as any of the stories listed below?
 
 Rules:
 - Match if they are clearly about the same specific event or continuing storyline, even when the new article is an update, explainer, reaction, evacuation step, casualty update, or human-interest angle on that same event
@@ -511,23 +529,16 @@ Rules:
 - Do not match if the stories contradict each other (e.g. "price drop" vs "price increase")
 - Do not match broad opinion or analysis to a news event unless it is explicitly anchored to that same concrete event or ongoing situation
 - Use the context snippets to distinguish between similar-sounding but different events
-- If it matches, respond with the number of the matching story
-- If it does not match any story, respond with 0
+- If it matches, the match_id should be the number of the matching story
+- If it does not match any story, the match_id should be 0
 
-Respond ONLY with a JSON object in this EXACT format:
-{{"match_id": 0}}
-or
-{{"match_id": 2}}
+Examples of correct NON-matches (match_id 0): same broad topic but different events;
+same person in unrelated stories; analysis/opinion not anchored to the listed event.
 
-Examples of correct NON-matches (should return {{"match_id": 0}}):
-- "Meta announces layoffs" vs "Epic Games lays off 900 workers" -> {{"match_id": 0}} (different companies, different events)
-- "Measles outbreak in Michigan" vs "Measles outbreak in Washington state" -> {{"match_id": 0}} (same disease, different locations)
-- "UFC fighter suspended for PED use" vs "MLB player suspended for PED use" -> {{"match_id": 0}} (different sports, different athletes)
-- "iPhone security alert" vs "Chrome zero-day vulnerability" -> {{"match_id": 0}} (different platforms, different vulnerabilities)
-- "NPR funding ruling" vs "Pentagon press policy ruling" -> {{"match_id": 0}} (different court cases)
-- "Grocery chain closing 17 stores" vs "Restaurant chain closing locations" -> {{"match_id": 0}} (different companies)
-- "Gold prices fall amid Iran war" vs "Trump says no ceasefire with Iran" -> {{"match_id": 0}} (different topics: finance vs diplomacy)
-- "How the Iran war affects trade recovery" vs "Iranian official killed in strike" -> {{"match_id": 0}} (analysis piece vs news event)"""
+Existing stories:
+{story_list}
+
+{article_block}"""
 
 
 @observe()
@@ -549,7 +560,7 @@ def ask_ollama_for_match(article_title, candidate_stories, article_content=None,
         input=prompt
     )
     try:
-        result = generate(prompt, task="classification", json_mode=True)
+        result = generate(prompt, task="classification", schema=MATCH_SCHEMA)
         if not result:
             return None
             

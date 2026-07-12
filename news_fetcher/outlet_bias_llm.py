@@ -1,34 +1,40 @@
 # muckscraperHeadlinesGoogleNEW/news_fetcher/outlet_bias_llm.py
 # news_fetcher/outlet_bias_llm.py
-import os
 import logging
-from langfuse import Langfuse
+from news_fetcher import langfuse_client  # noqa: F401
 from langfuse.decorators import observe, langfuse_context
 from news_fetcher.llm_client import generate
 
 logger = logging.getLogger(__name__)
-
-langfuse = Langfuse(
-    public_key=os.environ.get("LANGFUSE_PUBLIC_KEY", ""),
-    secret_key=os.environ.get("LANGFUSE_SECRET_KEY", ""),
-    host=os.environ.get("LANGFUSE_HOST", "http://localhost:3000")
-)
-
 from aggregator.country_config import get_config
 _cfg = get_config()
 
 BIAS_LABELS = _cfg["bias_labels"]
 BIAS_DESCRIPTIONS = _cfg["bias_descriptions"]
 
+BIAS_RATING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "rating": {
+            "oneOf": [
+                {"type": "integer", "minimum": 1, "maximum": 5},
+                {"type": "string", "enum": ["unknown"]},
+            ],
+            "description": "Bias score 1-5 or unknown",
+        }
+    },
+    "required": ["rating"],
+}
+
 
 @observe()
-def _ask_ollama(prompt):
+def _ask_ollama(prompt, schema=None):
     """Send a prompt to Ollama and return the raw response string or None."""
     langfuse_context.update_current_observation(
         input=prompt
     )
     try:
-        result = generate(prompt, task="classification", json_mode=True)
+        result = generate(prompt, task="classification", schema=schema)
         if result:
             langfuse_context.update_current_observation(
                 output=result
@@ -41,7 +47,7 @@ def _ask_ollama(prompt):
 
 def _parse_bias_score(raw, label):
     """Parse a 1-5 integer from Ollama's response."""
-    if raw is None:
+    if not raw:
         return None
     import json
     try:
@@ -68,23 +74,19 @@ def get_outlet_bias_from_llm(outlet_name):
     country_name = _cfg.get("country_name", "the given country")
     scale_text = "\n".join([f"{k} = {v} ({BIAS_DESCRIPTIONS[k]})" for k, v in BIAS_LABELS.items()])
 
-    prompt = f"""You are a media bias analyst for {country_name}. Rate the political bias of the news outlet "{outlet_name}" on this scale:
+    # Static prefix first so consecutive bias calls share KV cache.
+    prompt = f"""You are a media bias analyst for {country_name}. Rate the political bias of a news outlet on this scale:
 {scale_text}
 
 Rules:
 - If you have never heard of the outlet or genuinely cannot determine its bias, the rating should be "unknown"
-
-Respond ONLY with a JSON object in this EXACT format:
-{{"rating": 3}}
-or
-{{"rating": "unknown"}}
 
 Outlet: {outlet_name}"""
 
     langfuse_context.update_current_observation(
         input=prompt
     )
-    raw = _ask_ollama(prompt)
+    raw = _ask_ollama(prompt, schema=BIAS_RATING_SCHEMA)
     langfuse_context.update_current_observation(
         output=raw
     )
@@ -107,7 +109,8 @@ def get_article_bias_from_llm(title, content=None):
     country_name = _cfg.get("country_name", "the given country")
     scale_text = "\n".join([f"{k} = {v} ({BIAS_DESCRIPTIONS[k]})" for k, v in BIAS_LABELS.items()])
 
-    prompt = f"""You are a media bias analyst for {country_name}. Read the following news article and rate its political bias on this scale:
+    # Static prefix first so consecutive bias calls share KV cache.
+    prompt = f"""You are a media bias analyst for {country_name}. Read a news article and rate its political bias on this scale:
 {scale_text}
 
 Consider the language used, framing, and perspective presented in the article itself.
@@ -115,18 +118,13 @@ Consider the language used, framing, and perspective presented in the article it
 Rules:
 - If you genuinely cannot determine the bias from the content, the rating should be "unknown"
 
-Respond ONLY with a JSON object in this EXACT format:
-{{"rating": 3}}
-or
-{{"rating": "unknown"}}
-
 Article:
 {article_text}"""
 
     langfuse_context.update_current_observation(
         input=prompt
     )
-    raw = _ask_ollama(prompt)
+    raw = _ask_ollama(prompt, schema=BIAS_RATING_SCHEMA)
     langfuse_context.update_current_observation(
         output=raw
     )

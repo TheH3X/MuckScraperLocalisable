@@ -1,0 +1,42 @@
+<!-- aggregator/templates/edition_archive.html -->
+<!DOCTYPE html>
+<html data-theme="light">
+<head>
+    {% from 'newspaper_macros.html' import newspaper_head %}
+    {{ newspaper_head('Full Archive — MuckScraper News') }}
+</head>
+<body>
+
+{% from 'newspaper_macros.html' import archive_drawer, top_nav, masthead, theme_script %}
+{{ archive_drawer(recent_editions) }}
+
+<div class="container">
+    {{ top_nav(show_headlines_link=true) }}
+    {{ masthead('Full Archive') }}
+
+    <div class="archive-main">
+        <h2>Every Published Edition</h2>
+        <p class="archive-sub">Newest first.</p>
+
+        {% if grouped_editions %}
+            {% for day, editions in grouped_editions %}
+            <div class="archive-month">{{ day.strftime('%B %Y')|upper }}</div>
+            <div class="edition-chip-row">
+                {% for edition in editions %}
+                <a class="edition-chip" href="{{ url_for('public.view_edition', edition_date=edition.date.isoformat(), edition_type=edition.edition_type) }}">
+                    <span class="type-dot {{ edition.edition_type }}"></span>
+                    {{ day.strftime('%b %d') }} — {{ edition.edition_type|capitalize }}
+                </a>
+                {% endfor %}
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="empty-state">No editions have been published yet.</div>
+        {% endif %}
+    </div>
+</div>
+
+<footer class="site-footer">MuckScraper — self-hosted, balanced news editions.</footer>
+{{ theme_script() }}
+</body>
+</html>

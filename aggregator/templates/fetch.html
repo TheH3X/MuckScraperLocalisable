@@ -242,11 +242,11 @@
             <form method="POST" action="{{ url_for('admin.fetch_articles') }}">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="next" value="{{ url_for('admin.fetch_page') }}">
-                <input type="hidden" name="label" value="{{ preset.label }}">
-                <input type="hidden" name="mode" value="{{ preset.mode }}">
-                <input type="hidden" name="country" value="{{ preset.country }}">
-                <input type="hidden" name="category" value="{{ preset.category }}">
-                <input type="hidden" name="query" value="{{ preset.query }}">
+                <input type="hidden" name="label" value="{{ preset.name }}">
+                <input type="hidden" name="mode" value="{{ preset.fetch_mode }}">
+                <input type="hidden" name="country" value="{{ preset.fetch_country or '' }}">
+                <input type="hidden" name="category" value="{{ preset.fetch_category or '' }}">
+                <input type="hidden" name="query" value="{{ preset.fetch_query or '' }}">
                 <input type="hidden" name="gnews_query" value="{{ preset.gnews_query }}">
                 <input type="hidden" name="gnews_category" value="{{ preset.gnews_category }}">
                 <button type="submit" class="btn">Fetch {{ preset.label }}</button>

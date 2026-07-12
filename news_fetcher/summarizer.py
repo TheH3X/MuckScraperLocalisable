@@ -3,20 +3,57 @@
 import os
 import re
 import logging
-from langfuse import Langfuse
+from news_fetcher.langfuse_client import langfuse
 from langfuse.decorators import observe, langfuse_context
-from news_fetcher.llm_client import generate, check_ollama_status
+from news_fetcher.llm_client import generate, check_ollama_status, truncate_to_token_budget
 
 logger = logging.getLogger(__name__)
-
-langfuse = Langfuse(
-    public_key=os.environ.get("LANGFUSE_PUBLIC_KEY", ""),
-    secret_key=os.environ.get("LANGFUSE_SECRET_KEY", ""),
-    host=os.environ.get("LANGFUSE_HOST", "http://localhost:3000")
-)
-
 from aggregator.country_config import get_config
 _cfg = get_config()
+
+STORY_SUMMARY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "executive_summary": {"type": "string"},
+    },
+    "required": ["executive_summary"],
+}
+
+DEEP_REPORT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "the_story": {"type": "string"},
+        "why_it_matters": {"type": "string"},
+        "key_details": {"type": "string"},
+        "different_perspectives": {"type": "string"},
+        "whats_missing": {"type": "string"},
+        "whats_next": {"type": "string"},
+    },
+    "required": [
+        "the_story",
+        "why_it_matters",
+        "key_details",
+        "different_perspectives",
+        "whats_missing",
+        "whats_next",
+    ],
+}
+
+ARTICLE_SUMMARY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "the_big_picture": {"type": "string"},
+        "why_it_matters": {"type": "string"},
+        "quick_analysis": {"type": "string"},
+        "whats_next": {"type": "string"},
+    },
+    "required": ["the_big_picture", "why_it_matters", "quick_analysis", "whats_next"],
+}
+
+STORY_SUMMARY_MAX_ARTICLES = 5
+STORY_SUMMARY_CHARS_PER_ARTICLE = 700
+ARTICLE_SUMMARY_MAX_CHARS = 1500
+DEEP_REPORT_INPUT_TOKEN_BUDGET = 3000
 
 
 def strip_html(text):
@@ -31,6 +68,79 @@ def strip_html(text):
     # Collapse whitespace
     text = re.sub(r'\s+', ' ', text).strip()
     return text
+
+
+_SUMMARY_JSON_SUFFIX = (
+    '\n\nReturn ONLY a JSON object with a single key "executive_summary" '
+    "containing the summary paragraph as a string. "
+    "Do not echo the articles, rules, or task back in the JSON."
+)
+
+
+def _build_story_articles_block(articles, chars_per_article=STORY_SUMMARY_CHARS_PER_ARTICLE):
+    """Format articles for story-level prompts with per-article char cap."""
+    article_texts = []
+    for i, article in enumerate(articles, 1):
+        text = f"{i}. Title: {article.title}"
+        if article.content:
+            clean_content = strip_html(article.content)
+            snippet = clean_content[:chars_per_article].strip()
+            text += f"\n   Content: {snippet}"
+        article_texts.append(text)
+    return "\n\n".join(article_texts)
+
+
+def _finalize_story_summary_prompt(prompt):
+    """Normalize DB/default prompts so json_mode returns a single summary field."""
+    prompt = prompt.rstrip()
+    if prompt.endswith("Executive Summary:"):
+        prompt = prompt[: -len("Executive Summary:")].rstrip()
+    if "executive_summary" not in prompt.lower():
+        prompt += _SUMMARY_JSON_SUFFIX
+    return prompt
+
+
+def _extract_story_summary_text(response):
+    """Parse story summary output from JSON or plain-text fallback."""
+    if not response:
+        return None
+
+    import json
+
+    try:
+        parsed = json.loads(response)
+        if isinstance(parsed, str):
+            return parsed.strip() or None
+        if isinstance(parsed, dict):
+            if any(key in parsed for key in ("articles", "rules", "task")):
+                return None
+            for key in ("executive_summary", "summary", "text", "content"):
+                value = parsed.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            for value in parsed.values():
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    except json.JSONDecodeError:
+        pass
+
+    match = re.search(
+        r'"executive_summary"\s*:\s*"((?:\\.|[^"\\])*)"',
+        response,
+        re.DOTALL,
+    )
+    if match:
+        try:
+            return json.loads(f'"{match.group(1)}"').strip() or None
+        except json.JSONDecodeError:
+            text = match.group(1).strip()
+            return text or None
+
+    cleaned = response.strip()
+    if cleaned:
+        cleaned = re.sub(r"(?i)^executive summary:\s*", "", cleaned, count=1).strip()
+        return cleaned or None
+    return None
 
 
 STORY_FILTER_STOPWORDS = {
@@ -272,7 +382,9 @@ def summarize_story(story):
     analysis_type = detect_analysis_type(story)
     persona = get_persona(analysis_type, obj=story)
 
-    prompt_articles, excluded_articles = _select_story_prompt_articles(story, limit=10)
+    prompt_articles, excluded_articles = _select_story_prompt_articles(
+        story, limit=STORY_SUMMARY_MAX_ARTICLES
+    )
     readable_articles = [
         article for article in prompt_articles
         if len(strip_html(article.content or "").strip()) >= 200
@@ -293,18 +405,7 @@ def summarize_story(story):
         )
         return None
 
-    article_texts = []
-    for i, article in enumerate(prompt_articles, 1):
-        text = f"{i}. Title: {article.title}"
-        if article.content:
-            # Strip HTML before sending to Ollama
-            clean_content = strip_html(article.content)
-            # Use more content now that we have full scraped articles
-            snippet = clean_content[:1500].strip()
-            text += f"\n   Content: {snippet}"
-        article_texts.append(text)
-
-    combined = "\n\n".join(article_texts)
+    combined = _build_story_articles_block(readable_articles[:STORY_SUMMARY_MAX_ARTICLES])
 
     # Check if any of the story's topics has a DB-stored summary prompt override
     db_summary_prompt = None
@@ -324,24 +425,19 @@ def summarize_story(story):
         except (KeyError, ValueError):
             prompt = db_summary_prompt  # Use as-is if placeholders are wrong
     else:
+        # Static prefix first so consecutive summary calls share KV cache.
         prompt = f"""You are a {persona} writing an executive summary for a news briefing.
 
-Below are multiple news articles covering the same story. Write a concise executive summary.
+Write a concise executive summary for the story below.
 
 Rules:
 - Write exactly one short paragraph
 - Use 3 to 5 sentences
 - Explain what happened, why it matters, and the most important current development
-- No bullet points
-- No section labels
-- No markdown or prefatory text
-- Begin directly with the first sentence of the summary. Do not use phrases like "Here is the summary:".
 - Keep it sharp and readable for a front-page briefing
 
 Articles:
-{combined}
-
-Executive Summary:"""
+{combined}"""
 
     langfuse_context.update_current_observation(
         input=prompt,
@@ -353,16 +449,26 @@ Executive Summary:"""
         }
     )
     try:
-        summary = generate(prompt, task="summary", json_mode=False)
+        summary_response = generate(prompt, task="summary", schema=STORY_SUMMARY_SCHEMA)
 
         langfuse_context.update_current_observation(
-            output=summary
+            output=summary_response
         )
 
-        if summary:
-            logger.info(f"  Generated {analysis_type} summary for story: {story.title[:60]}...")
-            return summary
-        return None
+        summary = _extract_story_summary_text(summary_response)
+        if not summary and summary_response:
+            # Fallback for legacy plain-text custom DB prompts (see generate_deep_report)
+            summary = summary_response.strip()
+            summary = re.sub(r"(?i)^executive summary:\s*", "", summary, count=1).strip() or None
+        if not summary:
+            logger.warning(
+                "  Failed to parse summary JSON: '%s'",
+                (summary_response or "")[:500],
+            )
+            return None
+
+        logger.info(f"  Generated {analysis_type} summary for story: {story.title[:60]}...")
+        return summary
 
     except Exception as e:
         logger.info(f"  Error generating summary for '{story.title}': {e}")
@@ -493,6 +599,8 @@ def generate_deep_report(story):
         if not combined.strip():
             return None
 
+    combined = truncate_to_token_budget(combined, DEEP_REPORT_INPUT_TOKEN_BUDGET)
+
     # Retrieve DB prompt override if available
     db_deep_prompt = None
     try:
@@ -515,37 +623,24 @@ def generate_deep_report(story):
         except (KeyError, ValueError):
             prompt = db_deep_prompt
     else:
-        # Generic fallback
+        # Static prefix first so consecutive report calls share KV cache.
         prompt = f"""You are an experienced journalist writing a detailed report on a news story.
 
-Below are articles covering the same story:
-
-{combined}
-
-Write a detailed analytical report using this EXACT format:
-
-The story: [Write 2-3 sentences explaining what happened factually]
-
-Why it matters: [Explain the significance of this story — who it affects and how]
-
-Key details: [List the most important facts, figures, or developments from the coverage]
-
-Different perspectives: [Describe how different outlets or sources are framing this story. If coverage is uniform, say what angle is being emphasized.]
-
-What's missing: [Identify what angles or questions seem absent from the coverage]
-
-What's next: [Write one sentence on what to watch for]
+Write a detailed analytical report covering:
+- the_story: 2-3 sentences explaining what happened factually
+- why_it_matters: significance — who it affects and how
+- key_details: most important facts, figures, or developments
+- different_perspectives: how outlets frame the story (or what angle is emphasized if uniform)
+- whats_missing: angles or questions absent from the coverage
+- whats_next: one sentence on what to watch for
 
 Rules:
-- Use EXACTLY the labels shown above including the colon
-- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
 - Stay neutral and analytical
 - Compare only the outlets and perspectives actually present in the article list
 - Do not use left/right political framing unless the story is explicitly about politics, government, law, elections, or policy
-- No markdown, no extra formatting
-- Do not add any text before or after the structure above"""
 
-
+Articles:
+{combined}"""
 
     langfuse_context.update_current_observation(
         input=prompt,
@@ -557,8 +652,37 @@ Rules:
     )
 
     try:
-        report = generate(prompt, task="report", json_mode=False)
-        langfuse_context.update_current_observation(output=report)
+        import json
+        report_response = generate(prompt, task="report", schema=DEEP_REPORT_SCHEMA)
+        langfuse_context.update_current_observation(output=report_response)
+        
+        if not report_response:
+            return None
+
+        try:
+            parsed = json.loads(report_response)
+            
+            # Reconstruct the expected text format
+            sections = []
+            if "the_story" in parsed:
+                sections.append(f"The story: {parsed['the_story']}")
+            if "why_it_matters" in parsed:
+                sections.append(f"Why it matters: {parsed['why_it_matters']}")
+            if "key_details" in parsed:
+                sections.append(f"Key details: {parsed['key_details']}")
+            if "different_perspectives" in parsed:
+                sections.append(f"Different perspectives: {parsed['different_perspectives']}")
+            if "whats_missing" in parsed:
+                sections.append(f"What's missing: {parsed['whats_missing']}")
+            if "whats_next" in parsed:
+                sections.append(f"What's next: {parsed['whats_next']}")
+            
+            report = "\n\n".join(sections)
+            if not report.strip():
+                report = report_response # fallback
+        except json.JSONDecodeError:
+            report = report_response # Fallback for old custom DB prompts
+            
         if report:
             logger.info(f"  Generated {analysis_type} deep report for: {story.title[:60]}...")
             return report
@@ -585,38 +709,28 @@ def summarize_article(article):
     analysis_type = detect_analysis_type(article)
     persona = get_persona(analysis_type)
 
-    clean_content = strip_html(article.content)[:3000].strip()
+    clean_content = strip_html(article.content)[:ARTICLE_SUMMARY_MAX_CHARS].strip()
     if not clean_content:
         return None
 
+    # Static prefix first so consecutive article-summary calls share KV cache.
     prompt = f"""You are a {persona} writing a tight Smart Brevity-style article briefing.
 
-Below is a news article. Write a concise briefing using EXACTLY this format:
-
-The big picture: [Write one direct sentence on what happened.]
-
-Why it matters: [Write 1-2 short sentences on why this story matters.]
-
-Quick analysis: [Write 1-2 short sentences on the framing, tension, consequence, uncertainty, or what stands out most.]
-
-What's next: [Write one sentence on what to watch for next.]
+Write a concise briefing with four sections:
+- the_big_picture: one direct sentence on what happened
+- why_it_matters: 1-2 short sentences on why this story matters
+- quick_analysis: 1-2 short sentences on framing, tension, consequence, or what stands out
+- whats_next: one sentence on what to watch for next
 
 Rules:
-- Use EXACTLY the labels shown above including the colon
-- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
-- No bullets
 - Keep the full response to 4 short sections only
 - Be concrete, not generic
 - Do not repeat the same idea in multiple sections
-- No markdown, no extra formatting, no commentary
-- Do not add any text before or after the structure above
 
 Article title: {article.title}
 
 Article content:
-{clean_content}
-
-Summary:"""
+{clean_content}"""
 
     langfuse_context.update_current_observation(
         input=prompt,
@@ -624,8 +738,31 @@ Summary:"""
     )
 
     try:
-        summary = generate(prompt, task="summary", json_mode=False)
-        langfuse_context.update_current_observation(output=summary)
+        import json
+        summary_response = generate(prompt, task="summary", schema=ARTICLE_SUMMARY_SCHEMA)
+        langfuse_context.update_current_observation(output=summary_response)
+        
+        if not summary_response:
+            return None
+            
+        try:
+            parsed = json.loads(summary_response)
+            sections = []
+            if "the_big_picture" in parsed:
+                sections.append(f"The big picture: {parsed['the_big_picture']}")
+            if "why_it_matters" in parsed:
+                sections.append(f"Why it matters: {parsed['why_it_matters']}")
+            if "quick_analysis" in parsed:
+                sections.append(f"Quick analysis: {parsed['quick_analysis']}")
+            if "whats_next" in parsed:
+                sections.append(f"What's next: {parsed['whats_next']}")
+            
+            summary = "\n\n".join(sections)
+            if not summary.strip():
+                summary = summary_response
+        except json.JSONDecodeError:
+            summary = summary_response
+            
         if summary:
             logger.info(f"  Generated {analysis_type} summary for article: {article.title[:60]}...")
             return summary
@@ -633,6 +770,55 @@ Summary:"""
     except Exception as e:
         logger.error(f"  Error generating summary for article '{article.title}': {e}")
         return None
+
+
+ARTICLE_DEEP_POLITICS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "core_argument": {"type": "string"},
+        "how_it_frames_the_issue": {"type": "string"},
+        "what_evidence_it_relies_on": {"type": "string"},
+        "what_to_question_or_watch": {"type": "string"},
+    },
+    "required": [
+        "core_argument",
+        "how_it_frames_the_issue",
+        "what_evidence_it_relies_on",
+        "what_to_question_or_watch",
+    ],
+}
+
+ARTICLE_DEEP_SCIENCE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "what_the_article_says": {"type": "string"},
+        "technical_substance": {"type": "string"},
+        "why_this_matters": {"type": "string"},
+        "what_remains_uncertain": {"type": "string"},
+    },
+    "required": [
+        "what_the_article_says",
+        "technical_substance",
+        "why_this_matters",
+        "what_remains_uncertain",
+    ],
+}
+
+ARTICLE_DEEP_BUSINESS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "what_happened": {"type": "string"},
+        "what_is_driving_it": {"type": "string"},
+        "who_is_affected": {"type": "string"},
+        "what_to_watch_next": {"type": "string"},
+    },
+    "required": [
+        "what_happened",
+        "what_is_driving_it",
+        "who_is_affected",
+        "what_to_watch_next",
+    ],
+}
 
 
 @observe()
@@ -648,88 +834,62 @@ def generate_article_deep_analysis(article):
         return None
 
     analysis_type = detect_analysis_type(article)
-    clean_content = strip_html(article.content)[:3500].strip()
+    clean_content = strip_html(article.content)[:ARTICLE_SUMMARY_MAX_CHARS].strip()
     if not clean_content:
         return None
 
+    analysis_schema = None
     if analysis_type == "politics":
+        analysis_schema = ARTICLE_DEEP_POLITICS_SCHEMA
         prompt = f"""You are a political analyst writing a focused article analysis.
 
-Analyze this political article using EXACTLY this format:
-
-Core argument: [Write 2-3 sentences summarizing the article's main thesis and factual basis]
-
-How it frames the issue: [Describe what assumptions, emphasis, or political framing the piece uses]
-
-What evidence it relies on: [Identify the main facts, sources, or claims used to support the argument]
-
-What to question or watch: [Note potential blind spots, unresolved questions, or what future reporting should clarify]
+Analyze this political article covering:
+- core_argument: main thesis and factual basis (2-3 sentences)
+- how_it_frames_the_issue: assumptions, emphasis, or political framing
+- what_evidence_it_relies_on: main facts, sources, or claims
+- what_to_question_or_watch: blind spots, unresolved questions, or future reporting needs
 
 Rules:
-- Use EXACTLY the labels shown above including the colon
-- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
 - Stay analytical, not partisan
-- No markdown, no extra formatting
-- Do not add any text before or after the structure above
 
 Article title: {article.title}
 
 Article content:
-{clean_content}
-
-Analysis:"""
+{clean_content}"""
     elif analysis_type == "science":
+        analysis_schema = ARTICLE_DEEP_SCIENCE_SCHEMA
         prompt = f"""You are a science and technology journalist writing a technical analysis.
 
-Analyze this article using EXACTLY this format:
-
-What the article says: [Write 2-3 sentences summarizing the core finding or development]
-
-Technical substance: [Describe the key mechanism, data, or technical concept explained in the article]
-
-Why this matters: [Explain what the development changes in practical or scientific terms]
-
-What remains uncertain: [Note limitations, caveats, unanswered questions, or hype risk]
+Analyze this article covering:
+- what_the_article_says: core finding or development (2-3 sentences)
+- technical_substance: key mechanism, data, or technical concept
+- why_this_matters: practical or scientific significance
+- what_remains_uncertain: limitations, caveats, unanswered questions, or hype risk
 
 Rules:
-- Use EXACTLY the labels shown above including the colon
-- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
 - Prioritize clarity and technical accuracy
-- No markdown, no extra formatting
-- Do not add any text before or after the structure above
 
 Article title: {article.title}
 
 Article content:
-{clean_content}
-
-Analysis:"""
+{clean_content}"""
     elif analysis_type == "business":
+        analysis_schema = ARTICLE_DEEP_BUSINESS_SCHEMA
         prompt = f"""You are a financial journalist writing a markets and business analysis.
 
-Analyze this article using EXACTLY this format:
-
-What happened: [Write 2-3 sentences summarizing the business or market event]
-
-What is driving it: [Explain the main financial, operational, or policy factors behind it]
-
-Who is affected: [Identify the companies, sectors, investors, or consumers most affected]
-
-What to watch next: [Note risks, catalysts, or decision points that matter going forward]
+Analyze this article covering:
+- what_happened: business or market event (2-3 sentences)
+- what_is_driving_it: main financial, operational, or policy factors
+- who_is_affected: companies, sectors, investors, or consumers most affected
+- what_to_watch_next: risks, catalysts, or decision points going forward
 
 Rules:
-- Use EXACTLY the labels shown above including the colon
-- The brackets [ ] are instructions for you. Do not include the brackets or the instruction text in your final response. Replace them with your actual analysis.
 - Focus on economic significance, not fluff
-- No markdown, no extra formatting
-- Do not add any text before or after the structure above
 
 Article title: {article.title}
 
 Article content:
-{clean_content}
-
-Analysis:"""
+{clean_content}"""
     else:
         return None
 
@@ -739,8 +899,39 @@ Analysis:"""
     )
 
     try:
-        analysis = generate(prompt, task="report", json_mode=False)
-        langfuse_context.update_current_observation(output=analysis)
+        import json
+        analysis_response = generate(prompt, task="report", schema=analysis_schema)
+        langfuse_context.update_current_observation(output=analysis_response)
+        
+        if not analysis_response:
+            return None
+            
+        try:
+            parsed = json.loads(analysis_response)
+            sections = []
+            
+            if analysis_type == "politics":
+                if "core_argument" in parsed: sections.append(f"Core argument: {parsed['core_argument']}")
+                if "how_it_frames_the_issue" in parsed: sections.append(f"How it frames the issue: {parsed['how_it_frames_the_issue']}")
+                if "what_evidence_it_relies_on" in parsed: sections.append(f"What evidence it relies on: {parsed['what_evidence_it_relies_on']}")
+                if "what_to_question_or_watch" in parsed: sections.append(f"What to question or watch: {parsed['what_to_question_or_watch']}")
+            elif analysis_type == "science":
+                if "what_the_article_says" in parsed: sections.append(f"What the article says: {parsed['what_the_article_says']}")
+                if "technical_substance" in parsed: sections.append(f"Technical substance: {parsed['technical_substance']}")
+                if "why_this_matters" in parsed: sections.append(f"Why this matters: {parsed['why_this_matters']}")
+                if "what_remains_uncertain" in parsed: sections.append(f"What remains uncertain: {parsed['what_remains_uncertain']}")
+            elif analysis_type == "business":
+                if "what_happened" in parsed: sections.append(f"What happened: {parsed['what_happened']}")
+                if "what_is_driving_it" in parsed: sections.append(f"What is driving it: {parsed['what_is_driving_it']}")
+                if "who_is_affected" in parsed: sections.append(f"Who is affected: {parsed['who_is_affected']}")
+                if "what_to_watch_next" in parsed: sections.append(f"What to watch next: {parsed['what_to_watch_next']}")
+            
+            analysis = "\n\n".join(sections)
+            if not analysis.strip():
+                analysis = analysis_response
+        except json.JSONDecodeError:
+            analysis = analysis_response
+
         if analysis:
             logger.info(f"  Generated {analysis_type} article analysis: {article.title[:60]}...")
             return analysis

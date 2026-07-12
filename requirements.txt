@@ -13,7 +13,7 @@ apscheduler
 playwright
 bleach
 readability-lxml
-pgvector
+pgvector==0.2.5
 numpy
 python-dotenv
 wakeonlan

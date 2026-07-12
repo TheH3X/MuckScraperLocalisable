@@ -2,7 +2,7 @@
 # news_fetcher/fetch_and_store_articles.py
 
 from aggregator import create_app, db
-from aggregator.article_signals import ROUNDUP_TITLE_PATTERNS, bias_bucket_for_score, is_roundup_article, low_value_article_reason
+from aggregator.article_signals import ROUNDUP_TITLE_PATTERNS, bias_bucket_for_score, bias_side_for_score, is_roundup_article, low_value_article_reason
 from aggregator.models import Article, Outlet, Story, Topic
 
 from news_fetcher.outlet_bias_llm import get_outlet_bias_from_llm
@@ -16,9 +16,14 @@ import json
 import re
 from news_fetcher.story_grouper import find_or_create_story, get_embedding, normalize_title_tokens, titles_are_near_duplicates
 from datetime import datetime, timedelta
-from news_fetcher.topic_classifier import classify_article
+from news_fetcher.topic_classifier import (
+    classify_article,
+    begin_classification_batch,
+    clear_classification_batch,
+)
 from news_fetcher.headline_generator import generate_story_headline, generate_missing_headlines
 import logging
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 logger = logging.getLogger(__name__)
@@ -69,6 +74,7 @@ def empty_store_metrics(topic_name, provider=None, input_articles=0):
         "stored": 0,
         "new_outlets": 0,
         "stories_touched": 0,
+        "story_ids": [],
         "skipped": {
             "missing_required": 0,
             "blocked_source": 0,
@@ -276,6 +282,13 @@ def stories_look_duplicate_for_edition(story_a, story_b):
     return False
 
 
+def _article_bias_side(article):
+    score = article.bias_score
+    if score is None and article.outlet:
+        score = article.outlet.bias_score
+    return bias_side_for_score(score)
+
+
 def _story_balance_bucket(story):
     counts = {
         "leftish": 0,
@@ -284,18 +297,8 @@ def _story_balance_bucket(story):
         "unrated": 0,
     }
     for article in story.articles:
-        score = article.bias_score
-        if score is None and article.outlet:
-            score = article.outlet.bias_score
-        bucket = bias_bucket_for_score(score)
-        if bucket in ("left", "lean_left"):
-            counts["leftish"] += 1
-        elif bucket in ("right", "lean_right"):
-            counts["rightish"] += 1
-        elif bucket == "center":
-            counts["center"] += 1
-        else:
-            counts["unrated"] += 1
+        side = _article_bias_side(article)
+        counts[side] = counts.get(side, 0) + 1
 
     leftish = counts["leftish"]
     center = counts["center"]
@@ -322,14 +325,10 @@ def _story_has_left_and_right_coverage(story):
     has_rightish = False
 
     for article in story.articles:
-        score = article.bias_score
-        if score is None and article.outlet:
-            score = article.outlet.bias_score
-        bucket = bias_bucket_for_score(score)
-
-        if bucket in ("left", "lean_left"):
+        side = _article_bias_side(article)
+        if side == "leftish":
             has_leftish = True
-        elif bucket in ("right", "lean_right"):
+        elif side == "rightish":
             has_rightish = True
 
         if has_leftish and has_rightish:
@@ -359,7 +358,7 @@ def _first_story_article(story):
     return None
 
 
-def retry_unrated_outlets():
+def retry_unrated_outlets(ollama_budget=30):
     """Find outlets with no bias score and retry.
     Checks curated lookup table first, then falls back to Ollama.
     Outlets that have failed Ollama 15 or more times are permanently skipped.
@@ -383,6 +382,7 @@ def retry_unrated_outlets():
 
     logger.info(f"Found {len(unrated)} unrated outlets, checking curated then Ollama...")
 
+    ollama_calls = 0
     for outlet in unrated:
         # Check curated lookup table first
         as_score = get_outlet_bias_score(outlet.name)
@@ -396,9 +396,16 @@ def retry_unrated_outlets():
                 article.bias_score = as_score
             continue
 
-        # Fall back to Ollama
+        if ollama_calls >= ollama_budget:
+            logger.info(
+                "  Ollama bias budget (%s) reached; deferring remaining unrated outlets.",
+                ollama_budget,
+            )
+            break
+
         logger.info(f"  No curated rating for {outlet.name}, trying Ollama...")
         bias_score = get_outlet_bias_from_llm(outlet.name)
+        ollama_calls += 1
 
         if bias_score is not None:
             logger.info(f"  Ollama score {bias_score} for {outlet.name}")
@@ -431,6 +438,91 @@ def get_or_create_topic(topic_name):
             db.session.rollback()
             topic = Topic.query.filter_by(name=topic_name).first()
     return topic
+
+
+def _topic_already_linked(topics, topic):
+    if topic is None:
+        return True
+    topic_id = topic.id
+    topic_name = (topic.name or "").strip().lower()
+    for existing in topics:
+        if topic_id is not None and existing.id == topic_id:
+            return True
+        if topic_id is None and topic_name and (existing.name or "").strip().lower() == topic_name:
+            return True
+    return False
+
+
+def append_topic_if_missing(parent, topic):
+    """Append a topic to a Story/Article without duplicate junction rows."""
+    if _topic_already_linked(parent.topics, topic):
+        return
+    parent.topics.append(topic)
+
+
+def _is_duplicate_article_url_error(exc):
+    orig = getattr(exc, "orig", None)
+    diag = getattr(orig, "diag", None)
+    if diag is not None and getattr(diag, "constraint_name", None) == "articles_url_key":
+        return True
+    message = str(exc).lower()
+    return "articles_url_key" in message or (
+        "duplicate key" in message and "(url)=" in message
+    )
+
+
+def _is_trusted_fetch_topic(topic_name):
+    """Scheduled fetch topics that do not need LLM re-classification."""
+    if not topic_name or topic_name in _TRUSTED_FETCH_TOPIC_SKIP:
+        return False
+    topic = Topic.query.filter_by(name=topic_name, is_active=True).first()
+    return topic is not None
+
+
+_TRUSTED_FETCH_TOPIC_SKIP = frozenset({"Custom", "Global News"})
+
+
+def _build_embed_text(clean_title, content):
+    from news_fetcher.summarizer import strip_html
+
+    embed_text = clean_title
+    if content:
+        snippet = strip_html(content)[:200].strip()
+        if snippet:
+            embed_text = f"{clean_title}. {snippet}"
+    return embed_text
+
+
+def _resolve_story_topic_names(story, topic_name, title, content, is_new_story):
+    if story.topics and not is_new_story:
+        names = [topic.name for topic in story.topics]
+        logger.debug("  [Classifier] Inherited topics from story: %s", ", ".join(names))
+        return names
+    if is_new_story and _is_trusted_fetch_topic(topic_name):
+        logger.debug("  [Classifier] Using fetch topic without LLM: %s", topic_name)
+        return [topic_name]
+    return classify_article(title, content)
+
+
+def _tag_story_topics(story, topic_names, topic_name=None):
+    from aggregator.models import Topic as TopicModel
+
+    names = []
+    seen = set()
+    if topic_name and topic_name != "Custom":
+        names.append(topic_name)
+    for name in topic_names or []:
+        if name and name not in seen:
+            names.append(name)
+            seen.add(name)
+
+    for name in names:
+        topic = TopicModel.query.filter_by(name=name).first()
+        if not topic:
+            topic = TopicModel(name=name)
+            db.session.add(topic)
+            db.session.flush()
+        append_topic_if_missing(story, topic)
 
 
 def normalize_url(url):
@@ -712,6 +804,7 @@ def store_articles(articles_data, topic_name, provider=None, progress_cb=None):
     """
     metrics = empty_store_metrics(topic_name, provider=provider, input_articles=len(articles_data))
     stories_touched = set()
+    seen_urls = set()
 
     # Pre-fetch recent stories once for the whole batch. This is the hottest
     # fetch path: every new article compares against this pool, so keep the
@@ -719,7 +812,10 @@ def store_articles(articles_data, topic_name, provider=None, progress_cb=None):
     cutoff = datetime.utcnow() - timedelta(days=GROUPING_LOOKBACK_DAYS)
     recent_stories = (
         Story.query
-        .options(selectinload(Story.articles))
+        .options(
+            selectinload(Story.articles),
+            selectinload(Story.topics),
+        )
         .filter(Story.created_at >= cutoff)
         .all()
     )
@@ -729,204 +825,218 @@ def store_articles(articles_data, topic_name, provider=None, progress_cb=None):
         GROUPING_LOOKBACK_DAYS,
     )
 
-    for idx, article in enumerate(articles_data, 1):
-        if progress_cb:
-            progress_cb(idx, len(articles_data))
-            
-        title        = article.get("title")
-        content      = article.get("content") or ""
-        raw_url      = article.get("url")
-        source_name  = normalize_source_name(article.get("source_name", "Unknown"))
-        published_at = article.get("published_at", datetime.utcnow())
-        image_url    = article.get("image_url")
+    begin_classification_batch()
+    try:
+        for idx, article in enumerate(articles_data, 1):
+            if progress_cb:
+                progress_cb(idx, len(articles_data))
 
-        if not title or not raw_url:
-            metrics["skipped"]["missing_required"] += 1
-            continue
-            
-        url = normalize_url(raw_url)
+            title        = article.get("title")
+            content      = article.get("content") or ""
+            raw_url      = article.get("url")
+            source_name  = normalize_source_name(article.get("source_name", "Unknown"))
+            published_at = article.get("published_at", datetime.utcnow())
+            image_url    = article.get("image_url")
 
-        if any(blocked in url.lower() for blocked in BLOCKED_SOURCES):
-            logger.debug(f"Skipping blocked source: {url}")
-            metrics["skipped"]["blocked_source"] += 1
-            continue
-
-        low_value_reason = low_value_article_reason(title, url)
-        if low_value_reason:
-            logger.debug(f"Skipping low-value article ({low_value_reason}): {title} [{url}]")
-            metrics["skipped"][low_value_reason if low_value_reason in metrics["skipped"] else "low_value_url"] += 1
-            continue
-
-        if any(kw in title.lower() for kw in BLOCKED_TITLE_KEYWORDS):
-            logger.debug(f"Skipping blocked title: {title}")
-            metrics["skipped"]["blocked_title"] += 1
-            continue
-
-        # Check for URL duplicate (normalized)
-        existing = Article.query.filter_by(url=url).first()
-        if existing:
-            logger.debug(f"Skipping duplicate URL: {title}")
-            metrics["skipped"]["duplicate_url"] += 1
-            continue
-
-        # Check for Title + Source duplicate (catch same article, different URL)
-        # First get/create outlet to have the ID
-        outlet = Outlet.query.filter_by(name=source_name).first()
-        if outlet:
-            existing_title = Article.query.filter_by(title=title, outlet_id=outlet.id).first()
-            if existing_title:
-                logger.debug(f"Skipping duplicate Title+Outlet: {title}")
-                metrics["skipped"]["duplicate_title_outlet"] += 1
+            if not title or not raw_url:
+                metrics["skipped"]["missing_required"] += 1
                 continue
-        
-        logger.info(f"Processing: {title}")
 
-        if is_roundup_article(title, raw_url):
-            image_url = None
+            url = normalize_url(raw_url)
 
-        if not outlet:
-            as_score = get_outlet_bias_score(source_name)
-            if as_score is not None:
-                logger.info(f"  New outlet {source_name}: Curated rating {as_score}")
-                bias_score = as_score
-                bias_source = "static"
-                static_bias_score = as_score
-            else:
-                logger.info(f"  New outlet {source_name}: no Curated rating, will be rated in batch pass...")
-                bias_score = None
-                bias_source = None
-                static_bias_score = None
-            outlet = Outlet(
-                name=source_name,
-                url=url,
-                description="N/A",
-                bias_score=bias_score,
-                static_bias_score=static_bias_score,
-                bias_source=bias_source
-            )
-            db.session.add(outlet)
-            db.session.flush()
-            metrics["new_outlets"] += 1
+            if any(blocked in url.lower() for blocked in BLOCKED_SOURCES):
+                logger.debug(f"Skipping blocked source: {url}")
+                metrics["skipped"]["blocked_source"] += 1
+                continue
 
-        # Generate embedding for this article
-        # Use title + snippet for better semantic matching
-        from news_fetcher.story_grouper import strip_video_prefix
-        clean_title = strip_video_prefix(title)
-        embed_text = clean_title
-        if content:
-            from news_fetcher.summarizer import strip_html
-            snippet = strip_html(content)[:200].strip()
-            embed_text = f"{clean_title}. {snippet}"
-        article_embedding = get_embedding(embed_text)
-        
-        story, match = find_or_create_story(title, db, Story, recent_stories,
-                                            article_embedding=article_embedding,
-                                            article_content=content)
-        stories_touched.add(story.id)
+            low_value_reason = low_value_article_reason(title, url)
+            if low_value_reason:
+                logger.debug(f"Skipping low-value article ({low_value_reason}): {title} [{url}]")
+                metrics["skipped"][low_value_reason if low_value_reason in metrics["skipped"] else "low_value_url"] += 1
+                continue
 
-        # Add new story to recent_stories so subsequent articles
-        # in this same batch can match against it
-        if story not in recent_stories:
-            recent_stories.append(story)
+            if any(kw in title.lower() for kw in BLOCKED_TITLE_KEYWORDS):
+                logger.debug(f"Skipping blocked title: {title}")
+                metrics["skipped"]["blocked_title"] += 1
+                continue
 
-        # Classify article into topics via Ollama
-        from aggregator.models import Topic as TopicModel
-        classified_topic_names = classify_article(title, content)
-        for classified_name in classified_topic_names:
-            classified_topic = TopicModel.query.filter_by(name=classified_name).first()
-            if not classified_topic:
-                classified_topic = TopicModel(name=classified_name)
-                db.session.add(classified_topic)
+            existing = Article.query.filter_by(url=url).first()
+            if existing:
+                logger.debug(f"Skipping duplicate URL: {title}")
+                metrics["skipped"]["duplicate_url"] += 1
+                continue
+
+            if url in seen_urls:
+                logger.debug(f"Skipping duplicate URL in batch: {title}")
+                metrics["skipped"]["duplicate_url"] += 1
+                continue
+            seen_urls.add(url)
+
+            outlet = Outlet.query.filter_by(name=source_name).first()
+            if outlet:
+                existing_title = Article.query.filter_by(title=title, outlet_id=outlet.id).first()
+                if existing_title:
+                    logger.debug(f"Skipping duplicate Title+Outlet: {title}")
+                    metrics["skipped"]["duplicate_title_outlet"] += 1
+                    continue
+
+            logger.info(f"Processing: {title}")
+
+            if is_roundup_article(title, raw_url):
+                image_url = None
+
+            if not outlet:
+                as_score = get_outlet_bias_score(source_name)
+                if as_score is not None:
+                    logger.info(f"  New outlet {source_name}: Curated rating {as_score}")
+                    bias_score = as_score
+                    bias_source = "static"
+                    static_bias_score = as_score
+                else:
+                    logger.info(f"  New outlet {source_name}: no Curated rating, will be rated in batch pass...")
+                    bias_score = None
+                    bias_source = None
+                    static_bias_score = None
+                outlet = Outlet(
+                    name=source_name,
+                    url=url,
+                    description="N/A",
+                    bias_score=bias_score,
+                    static_bias_score=static_bias_score,
+                    bias_source=bias_source
+                )
+                db.session.add(outlet)
                 db.session.flush()
-            if classified_topic not in story.topics:
-                story.topics.append(classified_topic)
+                metrics["new_outlets"] += 1
 
-        scrape_result = scrape_article(url, fallback_content=content)
-        scraped_content = scrape_result.content
-        if scraped_content:
-            # Check if this looks like a duplicate login/error page across the outlet
-            is_dup, dup_reason = detect_duplicate_outlet_content(scraped_content, outlet.id)
-            if is_dup:
-                logger.warning(f"  [Scraper] {dup_reason} — clearing content and blocking domain for {url[:60]}")
-                from news_fetcher.scraper import add_to_blocklist
-                add_to_blocklist(url, dup_reason)
-                scraped_content = None
-                scrape_result.content = None
-                scrape_result.status = "blocked"
-                scrape_result.failure_reason = dup_reason
+            scrape_result = scrape_article(url, fallback_content=content)
+            scraped_content = scrape_result.content
+            if scraped_content:
+                is_dup, dup_reason = detect_duplicate_outlet_content(scraped_content, outlet.id)
+                if is_dup:
+                    logger.warning(f"  [Scraper] {dup_reason} — clearing content and blocking domain for {url[:60]}")
+                    from news_fetcher.scraper import add_to_blocklist
+                    add_to_blocklist(url, dup_reason)
+                    scraped_content = None
+                    scrape_result.content = None
+                    scrape_result.status = "blocked"
+                    scrape_result.failure_reason = dup_reason
 
-        if scraped_content:
-            final_content = scraped_content
-        else:
-            from news_fetcher.scraper import sanitize_html
-            final_content = sanitize_html(f"<div>{content}</div>") if content else ""
+            if scraped_content:
+                final_content = scraped_content
+            else:
+                from news_fetcher.scraper import sanitize_html
+                final_content = sanitize_html(f"<div>{content}</div>") if content else ""
 
-        # Ensure embedding is a list, not a string
-        if isinstance(article_embedding, str):
-            import json
-            article_embedding = json.loads(article_embedding)
+            from news_fetcher.story_grouper import strip_video_prefix
+            from news_fetcher.summarizer import strip_html
 
-        # Resolve bias mode based on story topics
-        resolved_bias_mode = "none"
-        if story.topics:
-            modes = [t.bias_mode for t in story.topics if t.bias_mode]
-            if "political" in modes:
-                resolved_bias_mode = "political"
-            elif "editorial" in modes:
-                resolved_bias_mode = "editorial"
-                
-        article_bias_score = outlet.bias_score
-        if resolved_bias_mode == "none":
-            article_bias_score = None
+            clean_title = strip_video_prefix(title)
+            article_embedding = get_embedding(_build_embed_text(clean_title, final_content))
+            grouping_content = strip_html(final_content)[:600].strip() if final_content else content
 
-        new_article = Article(
-            title=title,
-            content=final_content,
-            source=source_name,
-            outlet_id=outlet.id,
-            story_id=story.id,
-            url=url,
-            date=published_at,
-            fetched_at=datetime.utcnow(),
-            bias_score=article_bias_score,
-            image_url=image_url,
-            embedding=article_embedding,
-            scrape_status=scrape_result.status,
-            scrape_method=truncate_db_string(scrape_result.method, 255),
-            scrape_failure_reason=truncate_db_string(scrape_result.failure_reason, 1024),
-            scrape_http_status=scrape_result.http_status,
-            grouping_match_method=truncate_db_string(getattr(match, "method", None), 32),
-            grouping_confidence=getattr(match, "confidence", None),
-            grouping_candidate_story_ids=serialize_grouping_candidate_ids(
-                getattr(match, "candidate_story_ids", None)
-            ),
-            grouping_needs_review=bool(getattr(match, "needs_review", False)),
-        )
+            story, match = find_or_create_story(
+                title,
+                db,
+                Story,
+                recent_stories,
+                article_embedding=article_embedding,
+                article_content=grouping_content,
+            )
+            is_new_story = match.method == "none"
+            stories_touched.add(story.id)
 
-        db.session.add(new_article)
-        # IMPORTANT: Append to story.articles so it's visible to find_matching_story
-        # for subsequent articles in this SAME loop iteration.
-        story.articles.append(new_article)
+            if story not in recent_stories:
+                recent_stories.append(story)
 
-        # Tag article with same topics as story
-        for t in story.topics:
-            if t not in new_article.topics:
-                new_article.topics.append(t)
+            classified_topic_names = _resolve_story_topic_names(
+                story,
+                topic_name,
+                title,
+                grouping_content or content,
+                is_new_story,
+            )
+            _tag_story_topics(story, classified_topic_names, topic_name=topic_name)
 
-        # Single-article stories keep headline = None so UI falls back to title.
-        # Multi-article story headlines are now generated in a batch pass by the scheduler.
-        if len(story.articles) < 2:
-            story.headline = None
-        metrics["stored"] += 1
-        metrics["scrape_statuses"][scrape_result.status] = (
-            metrics["scrape_statuses"].get(scrape_result.status, 0) + 1
-        )
-        bias_bucket = bias_bucket_for_score(outlet.bias_score)
-        metrics["bias_buckets"][bias_bucket] += 1
-        bias_source = outlet.bias_source or "unrated"
-        metrics["bias_sources"][bias_source] = metrics["bias_sources"].get(bias_source, 0) + 1
+            if isinstance(article_embedding, str):
+                article_embedding = json.loads(article_embedding)
 
-    db.session.commit()
+            resolved_bias_mode = "none"
+            if story.topics:
+                modes = [t.bias_mode for t in story.topics if t.bias_mode]
+                if "political" in modes:
+                    resolved_bias_mode = "political"
+                elif "editorial" in modes:
+                    resolved_bias_mode = "editorial"
+
+            article_bias_score = outlet.bias_score
+            if resolved_bias_mode == "none":
+                article_bias_score = None
+
+            new_article = Article(
+                title=title,
+                content=final_content,
+                source=source_name,
+                outlet_id=outlet.id,
+                story_id=story.id,
+                url=url,
+                date=published_at,
+                fetched_at=datetime.utcnow(),
+                bias_score=article_bias_score,
+                image_url=image_url,
+                embedding=article_embedding,
+                scrape_status=scrape_result.status,
+                scrape_method=truncate_db_string(scrape_result.method, 255),
+                scrape_failure_reason=truncate_db_string(scrape_result.failure_reason, 1024),
+                scrape_http_status=scrape_result.http_status,
+                grouping_match_method=truncate_db_string(getattr(match, "method", None), 32),
+                grouping_confidence=getattr(match, "confidence", None),
+                grouping_candidate_story_ids=serialize_grouping_candidate_ids(
+                    getattr(match, "candidate_story_ids", None)
+                ),
+                grouping_needs_review=bool(getattr(match, "needs_review", False)),
+            )
+
+            try:
+                with db.session.begin_nested():
+                    db.session.add(new_article)
+                    story.articles.append(new_article)
+                    for t in story.topics:
+                        append_topic_if_missing(new_article, t)
+                    if len(story.articles) < 2:
+                        story.headline = None
+                    db.session.flush()
+            except IntegrityError as exc:
+                if _is_duplicate_article_url_error(exc):
+                    logger.info("  Skipping duplicate URL (constraint): %s", url)
+                    metrics["skipped"]["duplicate_url"] += 1
+                    continue
+                raise
+
+            metrics["stored"] += 1
+            metrics["scrape_statuses"][scrape_result.status] = (
+                metrics["scrape_statuses"].get(scrape_result.status, 0) + 1
+            )
+            bias_bucket = bias_bucket_for_score(outlet.bias_score)
+            metrics["bias_buckets"][bias_bucket] += 1
+            bias_source = outlet.bias_source or "unrated"
+            metrics["bias_sources"][bias_source] = metrics["bias_sources"].get(bias_source, 0) + 1
+    finally:
+        clear_classification_batch()
+
+    try:
+        db.session.commit()
+    except IntegrityError as exc:
+        if _is_duplicate_article_url_error(exc):
+            db.session.rollback()
+            logger.warning(
+                "Duplicate article URL blocked batch commit for topic=%s; rolled back store pass.",
+                topic_name,
+            )
+            metrics["stored"] = 0
+            return metrics
+        raise
+    metrics["story_ids"] = sorted(stories_touched)
     metrics["stories_touched"] = len(stories_touched)
     logger.info(
         "Stored %s new articles for topic: %s (provider=%s, skipped=%s)",
@@ -998,8 +1108,7 @@ def review_ambiguous_grouping_matches(review_hours=24, max_articles=75):
             reassigned += 1
 
             for topic in list(original_story.topics) if original_story else []:
-                if topic not in matched_story.topics:
-                    matched_story.topics.append(topic)
+                append_topic_if_missing(matched_story, topic)
 
             if original_story:
                 clear_story_headline_if_single_article(original_story)
@@ -1007,7 +1116,7 @@ def review_ambiguous_grouping_matches(review_hours=24, max_articles=75):
             if original_story and not original_story.articles:
                 db.session.delete(original_story)
 
-            if len(matched_story.articles) >= 2:
+            if len(matched_story.articles) >= 2 and not matched_story.headline:
                 headline = generate_story_headline(matched_story)
                 if headline:
                     matched_story.headline = headline
@@ -1263,14 +1372,14 @@ def regroup_ungrouped_stories():
 
             # Merge topic tags
             for topic in story.topics:
-                if topic not in matched.topics:
-                    matched.topics.append(topic)
+                append_topic_if_missing(matched, topic)
 
             # Generate/Update headline for the matched story now that it has a new article
             from news_fetcher.headline_generator import generate_story_headline
-            headline = generate_story_headline(matched)
-            if headline:
-                matched.headline = headline
+            if not matched.headline:
+                headline = generate_story_headline(matched)
+                if headline:
+                    matched.headline = headline
 
             # Delete the now-empty story
             db.session.delete(story)
@@ -1585,10 +1694,8 @@ def force_regroup_all():
                     db.session.flush()
                 
                 # Since we cleared article.topics = [] above, this is safe
-                if topic not in article.topics:
-                    article.topics.append(topic)
-                if topic not in story.topics:
-                    story.topics.append(topic)
+                append_topic_if_missing(article, topic)
+                append_topic_if_missing(story, topic)
 
             # Commit in batches of 50
             if (i + 1) % 50 == 0:
@@ -1648,12 +1755,10 @@ def reclassify_all_articles(batch_size=50):
                 db.session.add(topic)
                 db.session.flush()
             
-            if topic not in article.topics:
-                article.topics.append(topic)
-            
+            append_topic_if_missing(article, topic)
+
             if article.story:
-                if topic not in article.story.topics:
-                    article.story.topics.append(topic)
+                append_topic_if_missing(article.story, topic)
 
         # Commit in batches
         if (i + 1) % batch_size == 0:
@@ -1673,8 +1778,9 @@ def ollama_catchup():
     audit_existing_scrapes()
     generate_missing_embeddings(batch_size=50)
     generate_missing_headlines()
+    generate_missing_deep_reports()
     regroup_ungrouped_stories()
-    retry_unrated_outlets()
+    retry_unrated_outlets(ollama_budget=20)
     logger.info("=== Ollama catchup complete ===")
 
 
@@ -1808,7 +1914,10 @@ def process_current_edition():
             else:
                 story_outputs_ready = bool(story.summary)
 
-            missing_child_summaries = any(
+            missing_child_summaries = (
+                article_count < 2
+                or not (story.summary and story.deep_report)
+            ) and any(
                 article.content and not article.summary
                 for article in story.articles
             )
@@ -1827,7 +1936,7 @@ def process_current_edition():
                         metrics["story_summaries_generated"] += 1
                         logger.info(f"  [Processor] Story summary: {story.title[:60]}")
 
-                if not story.deep_report:
+                if not story.deep_report and (story.headline_score or 0) > 0:
                     report = generate_deep_report(story)
                     if report:
                         story.deep_report = report
@@ -1851,8 +1960,12 @@ def process_current_edition():
                 story.deep_report = None
 
             db.session.commit()
-            # This is critical for the static site links
+            skip_child_summaries = (
+                article_count >= 2 and story.summary and story.deep_report
+            )
             for article in story.articles:
+                if skip_child_summaries:
+                    continue
                 if not article.summary and article.content:
                     summary = summarize_article(article)
                     if summary:
@@ -1876,8 +1989,8 @@ def sync_static_ratings():
     and have it automatically retroactively applied to existing outlets without
     a full migration script.
     """
+    from aggregator import db
     from aggregator.models import Outlet, Article
-    from aggregator.database import db
     from news_fetcher.outlet_bias_lookup import get_outlet_bias_score
     import logging
 

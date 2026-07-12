@@ -71,6 +71,21 @@ def bias_bucket_for_score(score):
     return str(bucket)
 
 
+def bias_side_for_score(score):
+    """
+    Map a numeric bias score to a coarse editorial side for balance logic.
+    1-2 = leftish, 3 = center, 4-5 = rightish, None = unrated.
+    """
+    if score is None:
+        return "unrated"
+    bucket = int(round(score))
+    if bucket <= 2:
+        return "leftish"
+    if bucket == 3:
+        return "center"
+    return "rightish"
+
+
 def low_value_article_reason(title=None, url=None):
     if is_roundup_article(title, url):
         return "roundup"

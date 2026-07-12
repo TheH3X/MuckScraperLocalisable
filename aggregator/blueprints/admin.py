@@ -3,7 +3,7 @@ import json
 import threading
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
-from flask import Blueprint, current_app, render_template, request, redirect, url_for, jsonify
+from flask import Blueprint, current_app, render_template, request, redirect, url_for, jsonify, flash
 from flask_login import login_required
 from sqlalchemy import case, func, or_
 from aggregator import db
@@ -449,7 +449,7 @@ def multi_article_stories():
 @admin.route("/fetch", methods=["POST"])
 @login_required
 def fetch_articles():
-    mode = request.form.get("mode", "top").strip()
+    mode = request.form.get("mode", "top").strip() or "top"
     query = request.form.get("query", "").strip() or None
     country = request.form.get("country", "").strip() or None
     category = request.form.get("category", "").strip() or None

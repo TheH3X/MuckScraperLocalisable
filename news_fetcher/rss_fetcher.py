@@ -5,7 +5,7 @@ import logging
 from collections import Counter
 from datetime import datetime
 from datetime import timedelta
-from aggregator.article_signals import bias_bucket_for_score
+from aggregator.article_signals import bias_side_for_score
 from news_fetcher.fetch_and_store_articles import merge_count_maps
 from news_fetcher.story_grouper import normalize_title_tokens, titles_are_near_duplicates
 
@@ -112,6 +112,7 @@ def fetch_and_store_rss(progress_cb=None):
         "stored": 0,
         "new_outlets": 0,
         "stories_touched": 0,
+        "story_ids": [],
         "skipped": {},
         "scrape_statuses": {},
         "bias_buckets": {},
@@ -142,6 +143,9 @@ def fetch_and_store_rss(progress_cb=None):
             metrics["stored"] += feed_metrics.get("stored", 0)
             metrics["new_outlets"] += feed_metrics.get("new_outlets", 0)
             metrics["stories_touched"] += feed_metrics.get("stories_touched", 0)
+            metrics["story_ids"] = sorted(
+                set(metrics.get("story_ids", [])) | set(feed_metrics.get("story_ids", []))
+            )
             merge_count_maps(metrics["skipped"], feed_metrics.get("skipped"))
             merge_count_maps(metrics["scrape_statuses"], feed_metrics.get("scrape_statuses"))
             merge_count_maps(metrics["bias_buckets"], feed_metrics.get("bias_buckets"))
@@ -165,7 +169,7 @@ def fetch_and_store_rss(progress_cb=None):
 
 
 def _story_bias_counts(story):
-    """Count articles by bias bucket using article.bias_score exclusively.
+    """Count articles by editorial side using article.bias_score exclusively.
 
     A None article bias_score means bias was intentionally suppressed for that
     article's topic — do NOT fall back to outlet.bias_score.
@@ -175,7 +179,7 @@ def _story_bias_counts(story):
         score = article.bias_score
         if score is None:
             continue  # Suppressed — omit from counts rather than use outlet score
-        counts[bias_bucket_for_score(score)] += 1
+        counts[bias_side_for_score(score)] += 1
     return counts
 
 
@@ -210,14 +214,14 @@ def _story_needs_right_enrichment(story):
             return False
 
     counts = _story_bias_counts(story)
-    if counts["lean_right"] or counts["right"]:
+    if counts["rightish"]:
         return False
 
-    rated_total = sum(counts[bucket] for bucket in ("left", "lean_left", "center", "lean_right", "right"))
+    rated_total = counts["leftish"] + counts["center"] + counts["rightish"]
     if rated_total < 2:
         return False
 
-    leftish_total = counts["left"] + counts["lean_left"]
+    leftish_total = counts["leftish"]
     if leftish_total >= 2:
         return True
 
@@ -234,14 +238,14 @@ def _story_needs_left_enrichment(story):
             return False
 
     counts = _story_bias_counts(story)
-    if counts["left"] or counts["lean_left"]:
+    if counts["leftish"]:
         return False
 
-    rated_total = sum(counts[bucket] for bucket in ("left", "lean_left", "center", "lean_right", "right"))
+    rated_total = counts["leftish"] + counts["center"] + counts["rightish"]
     if rated_total < 2:
         return False
 
-    rightish_total = counts["right"] + counts["lean_right"]
+    rightish_total = counts["rightish"]
     if rightish_total >= 2:
         return True
 
@@ -351,6 +355,7 @@ def _enrich_stories_with_feed_set(
         "stored": 0,
         "new_outlets": 0,
         "stories_touched": 0,
+        "story_ids": [],
         "skipped": {},
         "scrape_statuses": {},
         "bias_buckets": {},
@@ -416,6 +421,7 @@ def _enrich_stories_with_feed_set(
     metrics["stored"] = store_metrics.get("stored", 0)
     metrics["new_outlets"] = store_metrics.get("new_outlets", 0)
     metrics["stories_touched"] = store_metrics.get("stories_touched", 0)
+    metrics["story_ids"] = store_metrics.get("story_ids", [])
     merge_count_maps(metrics["skipped"], store_metrics.get("skipped"))
     merge_count_maps(metrics["scrape_statuses"], store_metrics.get("scrape_statuses"))
     merge_count_maps(metrics["bias_buckets"], store_metrics.get("bias_buckets"))
@@ -449,6 +455,7 @@ def enrich_skewed_stories_with_right_feeds(
         "stored": 0,
         "new_outlets": 0,
         "stories_touched": 0,
+        "story_ids": [],
         "skipped": {},
         "scrape_statuses": {},
         "bias_buckets": {},
