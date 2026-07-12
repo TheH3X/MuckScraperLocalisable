@@ -1,595 +1,88 @@
-<!-- muckscraperHeadlinesGoogleNEW/aggregator/templates/article.html -->
 <!DOCTYPE html>
 <html data-theme="light">
 <head>
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
-    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon_32.png') }}">
-    <link rel="icon" type="image/png" sizes="128x128" href="{{ url_for('static', filename='favicon_128.png') }}">
-    <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='favicon_192.png') }}">
-    <link rel="icon" type="image/png" sizes="512x512" href="{{ url_for('static', filename='favicon_512.png') }}">
-    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='favicon_180.png') }}">
-    <title>{{ article.title }} — MuckScraper</title>
-    <style>
-        :root {
-            --accent:        #5a5f52;
-            --accent-light:  #7a8172;
-            --accent-dark:   #464b40;
-
-            /* Light mode */
-            --bg:            #f8f9fa;
-            --surface:       #ffffff;
-            --topbar-bg:     #1e1e2e;
-            --topbar-text:   #cdd6f4;
-            --text:          #1a1a1a;
-            --text-muted:    #555;
-            --text-faint:    #888;
-            --border:        #eef0f2;
-            --summary-bg:    #fdfbff;
-            --shadow:        0 10px 30px rgba(0,0,0,0.08);
-            --input-border:  #dde1e7;
-        }
-
-        [data-theme="dark"] {
-            --bg:            #0f0f17;
-            --surface:       #1a1a26;
-            --text:          #e2e8f0;
-            --text-muted:    #a0aec0;
-            --text-faint:    #718096;
-            --border:        #2d2d3f;
-            --summary-bg:    #222230;
-            --shadow:        0 15px 40px rgba(0,0,0,0.4);
-            --input-border:  #3f3f5a;
-        }
-
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-
-        body {
-            font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            transition: background 0.2s, color 0.2s;
-            -webkit-font-smoothing: antialiased;
-        }
-
-        .topbar {
-            background: var(--topbar-bg);
-            padding: 16px 40px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            position: sticky;
-            top: 0;
-            z-index: 100;
-        }
-
-        .topbar a { color: #89b4fa; text-decoration: none; font-size: 14px; font-weight: 600; }
-        .topbar-title { color: var(--topbar-text); font-size: 18px; font-weight: 800; letter-spacing: -0.5px; }
-
-        .container {
-            max-width: 840px;
-            margin: 60px auto;
-            padding: 0 20px;
-        }
-
-        .article-card {
-            background: var(--surface);
-            border-radius: 24px;
-            padding: 48px;
-            box-shadow: var(--shadow);
-            border: 1px solid var(--border);
-        }
-
-        .article-meta {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 24px;
-            flex-wrap: wrap;
-        }
-
-        .outlet-name {
-            font-size: 14px;
-            font-weight: 700;
-            color: var(--text-muted);
-        }
-
-        .article-date {
-            font-size: 14px;
-            font-weight: 500;
-            color: var(--text-faint);
-            color: var(--text-muted);
-        }
-
-        .article-date {
-            font-size: 14px;
-            font-weight: 500;
-            color: var(--text-faint);
-        }
-
-        .bias-tag {
-            display: inline-block;
-            font-size: 11px;
-            font-weight: 800;
-            padding: 3px 10px;
-            border-radius: 8px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .bias-1 { background-color: #1a6bb5; color: white; }
-        .bias-2 { background-color: #6aaee0; color: white; }
-        .bias-3 { background-color: #888;    color: white; }
-        .bias-4 { background-color: #e07b6a; color: white; }
-        .bias-5 { background-color: #b51a1a; color: white; }
-        .bias-none { background-color: #ddd; color: #666;  }
-
-        .source-badge {
-            font-size: 9px;
-            font-weight: 800;
-            padding: 2px 5px;
-            border-radius: 4px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            vertical-align: middle;
-        }
-        .as-badge { background: #2a7a2a; color: white; }
-        .ai-badge { background: #555; color: white; }
-
-        h1 {
-            font-size: 36px;
-            font-weight: 800;
-            color: var(--text);
-            margin-bottom: 24px;
-            line-height: 1.2;
-            letter-spacing: -1px;
-        }
-
-        .divider {
-            border: none;
-            border-top: 1px solid var(--border);
-            margin: 32px 0;
-        }
-
-        .summary {
-            background: var(--summary-bg);
-            border-left: 5px solid var(--accent);
-            padding: 24px 32px;
-            margin-bottom: 40px;
-            font-size: 16px;
-            line-height: 1.6;
-            color: var(--text);
-            border-radius: 0 16px 16px 0;
-        }
-
-        .summary-label {
-            font-size: 11px;
-            font-weight: 800;
-            text-transform: uppercase;
-            color: var(--accent);
-            letter-spacing: 2px;
-            margin-bottom: 12px;
-        }
-
-        .summary p { margin-bottom: 1em; }
-        .summary p:last-child { margin-bottom: 0; }
-
-        .summary-section-label {
-            color: var(--accent);
-            font-size: 15px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .scrape-panel {
-            margin: 20px 0 28px;
-            padding: 16px 18px;
-            border-radius: 14px;
-            border: 1px solid var(--border);
-            background: var(--summary-bg);
-        }
-
-        .scrape-panel-header {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            flex-wrap: wrap;
-            margin-bottom: 10px;
-        }
-
-        .scrape-label {
-            font-size: 11px;
-            font-weight: 800;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            color: var(--text-faint);
-        }
-
-        .scrape-chip {
-            display: inline-flex;
-            align-items: center;
-            padding: 4px 10px;
-            border-radius: 999px;
-            border: 1px solid var(--border);
-            background: rgba(0,0,0,0.03);
-            font-size: 11px;
-            font-weight: 800;
-            letter-spacing: 0.04em;
-            text-transform: uppercase;
-        }
-
-        .scrape-chip.scrape-success { color: #1d6f42; border-color: rgba(29,111,66,0.25); background: rgba(29,111,66,0.08); }
-        .scrape-chip.scrape-fallback { color: #8a5a00; border-color: rgba(138,90,0,0.25); background: rgba(138,90,0,0.09); }
-        .scrape-chip.scrape-blocked,
-        .scrape-chip.scrape-failed { color: #a33636; border-color: rgba(163,54,54,0.25); background: rgba(163,54,54,0.08); }
-        .scrape-chip.scrape-skipped { color: #666; border-color: rgba(102,102,102,0.25); background: rgba(102,102,102,0.08); }
-
-        .scrape-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 10px 16px;
-        }
-
-        .scrape-item {
-            min-width: 0;
-        }
-
-        .scrape-key {
-            display: block;
-            margin-bottom: 4px;
-            font-size: 10px;
-            font-weight: 800;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            color: var(--text-faint);
-        }
-
-        .scrape-value {
-            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-            font-size: 12px;
-            color: var(--text-muted);
-            word-break: break-word;
-        }
-
-        .summary-bullets {
-            margin: 8px 0 1em 1.5em;
-            list-style: disc;
-        }
-
-        .summary-bullets li {
-            margin-bottom: 0.6em;
-        }
-
-        .btn {
-            display: inline-block;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 12px;
-            font-size: 13px;
-            font-weight: 700;
-            cursor: pointer;
-            background: var(--accent);
-            color: white;
-            text-decoration: none;
-            transition: all 0.2s;
-            box-shadow: 0 4px 12px rgba(164, 60, 181, 0.2);
-        }
-
-        .btn:hover { background: var(--accent-dark); transform: translateY(-1px); }
-
-        .article-body {
-            font-size: 18px;
-            line-height: 1.8;
-            color: var(--text);
-        }
-
-        .article-body p {
-            margin-bottom: 1.5em;
-        }
-
-        .article-body h1, .article-body h2, .article-body h3 {
-            margin: 1.5em 0 0.5em;
-            color: var(--text);
-            font-weight: 800;
-            letter-spacing: -0.5px;
-        }
-
-        .article-body h1 { font-size: 28px; }
-        .article-body h2 { font-size: 24px; }
-        .article-body h3 { font-size: 20px; }
-
-        .article-body ul, .article-body ol {
-            margin: 0.5em 0 1.5em 1.5em;
-        }
-
-        .article-body li {
-            margin-bottom: 0.5em;
-        }
-
-        .article-body blockquote {
-            border-left: 4px solid var(--accent-light);
-            margin: 2em 0;
-            padding: 16px 32px;
-            color: var(--text-muted);
-            font-style: italic;
-            background: var(--bg);
-            border-radius: 0 12px 12px 0;
-        }
-
-        .article-body a {
-            color: var(--accent);
-            text-decoration: underline;
-            text-underline-offset: 4px;
-        }
-
-        .article-body img {
-            max-width: 100%;
-            height: auto;
-            margin: 2em 0;
-            border-radius: 16px;
-            box-shadow: var(--shadow);
-        }
-
-        .source-link {
-            margin-top: 48px;
-            padding-top: 32px;
-            border-top: 1px solid var(--border);
-            font-size: 14px;
-            font-weight: 500;
-            color: var(--text-muted);
-        }
-
-        .source-link a {
-            color: var(--accent);
-            text-decoration: none;
-            font-weight: 700;
-        }
-
-        .source-link a:hover { text-decoration: underline; }
-
-        @media (max-width: 600px) {
-            .article-card { padding: 24px; border-radius: 0; }
-            .container { margin: 0; padding: 0; }
-            h1 { font-size: 28px; }
-            .topbar { padding: 16px 20px; }
-        }
-    </style>
+    {% from 'newspaper_macros.html' import newspaper_head %}
+    {{ newspaper_head(article.title ~ ' — MuckScraper News') }}
 </head>
 <body>
 
-<div class="topbar">
-    <div class="topbar-left">
-        <span class="topbar-title">MuckScraper</span>
-        <a href="{{ url_for('public.view_story', story_id=article.story_id) if article.story_id else url_for('admin.list_articles') }}">← Back to Story</a>
-    </div>
-    <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙 Dark</button>
-</div>
+{% from 'newspaper_macros.html' import archive_drawer, top_nav, masthead, outlet_bias_tag, theme_script %}
+{{ archive_drawer(recent_editions) }}
 
-<div class="container">
-    <div class="article-card">
-        <div id="ai-task-status" style="display:none; margin-bottom:20px; padding:12px 14px; border-radius:12px; border:1px solid var(--border); background:rgba(0,0,0,0.03); color:var(--text-muted); font-size:13px;"></div>
+<div class="container narrow">
+    {{ top_nav(show_headlines_link=true, show_story_link=true) }}
+    {{ masthead('Source Analysis') }}
 
-        <div class="article-meta">
-            <span class="outlet-name">{{ article.outlet.name }}</span>
-            <span class="article-date local-date" data-utc="{{ article.date.isoformat() }}Z">{{ article.date.strftime('%B %d, %Y') }}</span>
-            {% if article.last_updated and article.last_updated != article.date %}
-                <span style="color:var(--text-faint); font-size:12px;">•</span>
-                <span class="article-date">Updated: <span class="local-date" data-utc="{{ article.last_updated.isoformat() }}Z">{{ article.last_updated.strftime('%B %d, %Y %H:%M') }}</span></span>
-            {% endif %}
-
-            {% if article.bias_score %}
-                <span class="bias-tag bias-{{ article.bias_score | int }}">{{ bias_label(article.bias_score) }}</span>
-            {% endif %}
+    <div class="reader-header">
+        <div class="reader-meta">
+            {{ article.outlet.name|upper }}
+            · Last Updated:
+            <span class="local-date" data-utc="{{ article.date.isoformat() }}Z">{{ article.date.strftime('%b %d, %Y %H:%M') }}</span>
         </div>
+        <div class="outlet-tags" style="margin-bottom: 16px;">
+            {{ outlet_bias_tag(article.outlet) }}
+        </div>
+        <h1><a href="{{ article.url }}" target="_blank" rel="noopener">{{ article.title }}</a></h1>
+    </div>
 
-        <h1><a href="{{ article.url }}" target="_blank" style="color: inherit; text-decoration: none;">{{ article.title }}</a></h1>
+    {% if article.has_usable_image %}
+    <div class="image-box" style="margin-bottom: 24px;">
+        <img src="{{ article.image_url }}" alt="" loading="lazy">
+    </div>
+    {% endif %}
 
-        {% if article.has_usable_image %}
-            <img src="{{ article.image_url }}" alt="Article Image" style="width: 100%; border-radius: 16px; margin-bottom: 32px; box-shadow: var(--shadow);">
-        {% endif %}
-
-        <hr class="divider">
-
-        <div class="summary">
-            <div class="summary-label">Executive Summary</div>
+    <div class="analysis-section">
+        <div class="analysis-label">Executive Briefing</div>
+        <div class="analysis-body">
             {% if article.summary %}
                 {% for line in article.summary.split('\n') %}
                     {% set l = line.strip() %}
                     {% if l %}
-                        <p>{{ l }}</p>
+                        {% if ':' in l and l.split(':')[0].strip()|length < 30 %}
+                            {% set label = l.split(':', 1)[0].strip() %}
+                            {% set rest = l.split(':', 1)[1].strip() %}
+                            <p><strong>{{ label }}:</strong> {{ rest }}</p>
+                        {% else %}
+                            <p>{{ l }}</p>
+                        {% endif %}
                     {% endif %}
                 {% endfor %}
             {% elif not ollama_online %}
-                <p style="font-style: italic; color: var(--text-muted);">Summary will be generated when Ollama is back online. This article has been added to the queue.</p>
+                <p><em>Summary will be generated when Ollama is back online.</em></p>
             {% else %}
-                <p style="font-style: italic; color: var(--text-muted);">No summary has been generated yet. Use the summarize action to process this article.</p>
+                <p><em>No summary has been generated yet.</em></p>
             {% endif %}
         </div>
-
-        <div class="scrape-panel">
-            {% set scrape_status = article.scrape_status or 'pending' %}
-            <div class="scrape-panel-header">
-                <span class="scrape-label">Scrape Telemetry</span>
-                <span class="scrape-chip scrape-{{ scrape_status }}">
-                    {% if scrape_status == 'success' %}
-                        Scrape OK
-                    {% elif scrape_status == 'fallback' %}
-                        Fallback Used
-                    {% elif scrape_status == 'blocked' %}
-                        Blocked
-                    {% elif scrape_status == 'skipped' %}
-                        Skipped
-                    {% elif scrape_status == 'failed' %}
-                        Failed
-                    {% else %}
-                        Pending
-                    {% endif %}
-                </span>
-            </div>
-            <div class="scrape-grid">
-                <div class="scrape-item">
-                    <span class="scrape-key">Method</span>
-                    <span class="scrape-value">{{ article.scrape_method or 'n/a' }}</span>
-                </div>
-                <div class="scrape-item">
-                    <span class="scrape-key">HTTP Status</span>
-                    <span class="scrape-value">{{ article.scrape_http_status or 'n/a' }}</span>
-                </div>
-                <div class="scrape-item" style="grid-column: 1 / -1;">
-                    <span class="scrape-key">Failure Reason</span>
-                    <span class="scrape-value">{{ article.scrape_failure_reason or 'n/a' }}</span>
-                </div>
-            </div>
-        </div>
-
-        <div class="article-body">
-            {% if article.content and article.content|length > 100 %}
-                {{ article.content | safe }}
-            {% else %}
-                <div style="padding: 40px; background: var(--bg); border-radius: 16px; text-align: center; border: 1px dashed var(--border);">
-                    <p style="color: var(--text-muted); margin-bottom: 16px;">Full scrape unavailable for this article.</p>
-                    <a href="{{ article.url }}" target="_blank" class="btn">View Article at Source</a>
-                </div>
-            {% endif %}
-        </div>
-
-        <div class="article-actions" style="margin-top: 32px; display: flex; gap: 16px;">
-            <button type="button" class="btn" onclick="startAiTask('article_summary', {{ article.id }}, this)">Summarize</button>
-            <form method="POST" action="{{ url_for('admin.rate_article', article_id=article.id) }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn" style="background: var(--bg); color: var(--accent); border: 1px solid var(--accent);">Rate Bias</button>
-            </form>
-        </div>
-
-        <div class="source-link">
-            Original source: <a href="{{ article.url }}" target="_blank">{{ article.url }}</a>
-        </div>
-
     </div>
+
+    <div class="article-body">
+        {% if article.content and article.content|length > 100 %}
+            {{ article.content | safe }}
+        {% else %}
+            <p><em>Full scrape unavailable for this article.</em></p>
+            <p><a class="btn-action" href="{{ article.url }}" target="_blank" rel="noopener">View Article at Source</a></p>
+        {% endif %}
+    </div>
+
+    <details class="admin-panel">
+        <summary>Scrape Telemetry</summary>
+        <p style="margin-top: 12px;">
+            Status: {{ article.scrape_status or 'pending' }}
+            {% if article.scrape_method %} · Method: {{ article.scrape_method }}{% endif %}
+            {% if article.scrape_http_status %} · HTTP: {{ article.scrape_http_status }}{% endif %}
+        </p>
+        {% if article.scrape_failure_reason %}
+            <p>{{ article.scrape_failure_reason }}</p>
+        {% endif %}
+    </details>
+
+    <p style="margin-top: 24px; font-size: 12px; opacity: 0.7;">
+        Original source: <a href="{{ article.url }}" target="_blank" rel="noopener">{{ article.url }}</a>
+    </p>
 </div>
 
-<script>
-    function applyTheme(theme) {
-        document.documentElement.setAttribute('data-theme', theme);
-        const btn = document.getElementById('theme-toggle');
-        btn.textContent = theme === 'dark' ? '☀️ Light' : '🌙 Dark';
-    }
-
-    function toggleTheme() {
-        const current = document.documentElement.getAttribute('data-theme');
-        const next = current === 'dark' ? 'light' : 'dark';
-        localStorage.setItem('muckscraper-theme', next);
-        applyTheme(next);
-    }
-
-    const savedTheme = localStorage.getItem('muckscraper-theme') || 'light';
-    applyTheme(savedTheme);
-
-    const aiTaskStartUrl = "{{ url_for('admin.start_ai_task') }}";
-    const aiTaskStatusTemplate = "{{ url_for('admin.ai_task_status', task_type='TASK_TYPE', resource_id=999999) }}";
-    let activeAiTaskPoll = null;
-
-    function aiTaskStatusUrl(taskType, resourceId) {
-        return aiTaskStatusTemplate
-            .replace('TASK_TYPE', taskType)
-            .replace('999999', String(resourceId));
-    }
-
-    function renderAiTaskStatus(status, isError = false) {
-        const box = document.getElementById('ai-task-status');
-        if (!box) return;
-        box.style.display = 'block';
-        box.style.borderColor = isError ? 'rgba(154, 114, 91, 0.22)' : 'var(--border)';
-        box.style.background = isError ? 'rgba(154, 114, 91, 0.08)' : 'rgba(0,0,0,0.03)';
-        box.style.color = isError ? '#9a725b' : 'var(--text-muted)';
-        box.textContent = status.message || 'AI task update received.';
-    }
-
-    async function pollAiTask(taskType, resourceId, button) {
-        if (activeAiTaskPoll) {
-            clearInterval(activeAiTaskPoll);
-            activeAiTaskPoll = null;
-        }
-
-        const statusUrl = aiTaskStatusUrl(taskType, resourceId);
-        activeAiTaskPoll = setInterval(async () => {
-            const response = await fetch(statusUrl);
-            const status = await response.json();
-            renderAiTaskStatus(status, status.status === 'error');
-
-            if (status.status === 'success') {
-                clearInterval(activeAiTaskPoll);
-                activeAiTaskPoll = null;
-                window.location.reload();
-                return;
-            }
-
-            if (status.status === 'error') {
-                clearInterval(activeAiTaskPoll);
-                activeAiTaskPoll = null;
-                if (button) {
-                    button.disabled = false;
-                    button.textContent = button.dataset.originalText;
-                }
-            }
-        }, 2000);
-    }
-
-    async function startAiTask(taskType, resourceId, button) {
-        if (button) {
-            button.dataset.originalText = button.textContent;
-            button.disabled = true;
-            button.textContent = 'Working...';
-        }
-
-        const response = await fetch(aiTaskStartUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': document.querySelector('meta[name="csrf-token"]').content,
-            },
-            body: JSON.stringify({
-                task_type: taskType,
-                resource_id: resourceId,
-            }),
-        });
-
-        const payload = await response.json();
-        renderAiTaskStatus(payload.status || payload, response.status >= 400);
-
-        if (!response.ok && response.status !== 409) {
-            if (button) {
-                button.disabled = false;
-                button.textContent = button.dataset.originalText;
-            }
-            return;
-        }
-
-        await pollAiTask(taskType, resourceId, button);
-    }
-
-    // ── Local Timezone Conversion ──
-    function convertToLocalTime() {
-        const dateElements = document.querySelectorAll('.local-date');
-        dateElements.forEach(el => {
-            const utcDate = el.getAttribute('data-utc');
-            if (utcDate) {
-                const date = new Date(utcDate);
-                const options = { 
-                    year: 'numeric', 
-                    month: 'short', 
-                    day: '2-digit',
-                    hour: '2-digit', 
-                    minute: '2-digit',
-                    hour12: false 
-                };
-                el.textContent = date.toLocaleString(undefined, options).replace(',', '');
-            }
-        });
-    }
-    document.addEventListener('DOMContentLoaded', convertToLocalTime);
-</script>
-
+<footer class="site-footer">MuckScraper — self-hosted, balanced news editions.</footer>
+{{ theme_script() }}
 </body>
 </html>
