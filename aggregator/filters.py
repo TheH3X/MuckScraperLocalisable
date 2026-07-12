@@ -104,23 +104,26 @@ def register_filters(app):
             return palette[0]
         return palette[sum(ord(ch) for ch in name) % len(palette)]
 
-    @app.context_processor
-    def inject_bias_helpers():
+    # Template globals (not context_processor) so imported macros can use them.
+    @app.template_global()
+    def bias_label(score):
         from aggregator.country_config import get_config
-        _cfg = get_config()
-        
-        def bias_label(score):
-            if score is None: return ""
-            bucket = int(round(score))
-            if bucket < 1: bucket = 1
-            if bucket > 5: bucket = 5
-            return _cfg["bias_labels"][bucket]
-            
-        def bias_color_class(score):
-            if score is None: return ""
-            bucket = int(round(score))
-            if bucket <= 2: return "bias-left"
-            if bucket == 3: return "bias-center"
-            return "bias-right"
+        if score is None:
+            return ""
+        bucket = int(round(score))
+        if bucket < 1:
+            bucket = 1
+        if bucket > 5:
+            bucket = 5
+        return get_config()["bias_labels"][bucket]
 
-        return dict(bias_label=bias_label, bias_color_class=bias_color_class)
+    @app.template_global()
+    def bias_color_class(score):
+        if score is None:
+            return ""
+        bucket = int(round(score))
+        if bucket <= 2:
+            return "bias-left"
+        if bucket == 3:
+            return "bias-center"
+        return "bias-right"

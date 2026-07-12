@@ -8,7 +8,7 @@ from aggregator.models import Article, Outlet, Story, Topic
 from news_fetcher.outlet_bias_llm import get_outlet_bias_from_llm
 from news_fetcher.outlet_bias_lookup import get_outlet_bias_score
 from news_fetcher.summarizer import summarize_story, check_ollama_status, generate_deep_report, summarize_article
-from news_fetcher.scraper import scrape_article
+from news_fetcher.scraper import scrape_article, session_in_transaction
 from datetime import datetime
 import requests
 import os
@@ -997,6 +997,8 @@ def store_articles(articles_data, topic_name, provider=None, progress_cb=None):
                 grouping_needs_review=bool(getattr(match, "needs_review", False)),
             )
 
+            if not session_in_transaction(db.session):
+                db.session.begin()
             try:
                 with db.session.begin_nested():
                     db.session.add(new_article)

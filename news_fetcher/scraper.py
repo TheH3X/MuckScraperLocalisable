@@ -15,6 +15,16 @@ from datetime import datetime, timedelta
 from urllib.parse import urljoin, urlparse, urlunparse, parse_qsl, urlencode
 logger = logging.getLogger(__name__)
 
+
+def session_in_transaction(session):
+    """Return True when the scoped session has an active SQL transaction."""
+    try:
+        trans = session.connection().get_transaction()
+        return trans is not None and trans.is_active
+    except Exception:
+        return False
+
+
 HEADERS_DEFAULT = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -176,22 +186,43 @@ def _load_retry_cache():
         return _empty_retry_cache()
 
 
+def _persist_without_breaking_batch(work):
+    """Persist scraper metadata without ending an outer ingest transaction."""
+    from flask import has_app_context
+    if not has_app_context():
+        return None
+
+    from aggregator import db
+
+    session = db.session
+    if session_in_transaction(session):
+        with session.begin_nested():
+            result = work(session)
+            session.flush()
+            return result
+    result = work(session)
+    session.commit()
+    return result
+
+
 def _save_retry_cache(cache):
     try:
         from flask import has_app_context
         if not has_app_context():
             return
 
-        from aggregator import db
         from aggregator.models import AppSetting
 
         payload = json.dumps(cache, sort_keys=True)
-        setting = AppSetting.query.filter_by(key=RETRY_CACHE_SETTING_KEY).first()
-        if setting:
-            setting.value = payload
-        else:
-            db.session.add(AppSetting(key=RETRY_CACHE_SETTING_KEY, value=payload))
-        db.session.commit()
+
+        def _write(session):
+            setting = AppSetting.query.filter_by(key=RETRY_CACHE_SETTING_KEY).first()
+            if setting:
+                setting.value = payload
+            else:
+                session.add(AppSetting(key=RETRY_CACHE_SETTING_KEY, value=payload))
+
+        _persist_without_breaking_batch(_write)
     except Exception as exc:
         logger.info(f"  [Scraper] Retry cache save skipped: {exc}")
 
@@ -389,23 +420,27 @@ def is_domain_blocked(url):
 def add_to_blocklist(url, reason, is_permanent=False):
     """Add a domain to the scrape blocklist. Silent no-op if already present."""
     try:
-        from aggregator import db
         from aggregator.models import ScrapeBlocklist
         from datetime import datetime
         domain = get_domain(url)
         if not domain:
             return
-        existing = ScrapeBlocklist.query.filter_by(domain=domain).first()
-        if existing:
+
+        def _write(session):
+            existing = ScrapeBlocklist.query.filter_by(domain=domain).first()
+            if existing:
+                return False
+            session.add(ScrapeBlocklist(
+                domain=domain,
+                reason=reason,
+                is_permanent=is_permanent,
+                added_at=datetime.utcnow(),
+            ))
+            return True
+
+        added = _persist_without_breaking_batch(_write)
+        if not added:
             return
-        entry = ScrapeBlocklist(
-            domain=domain,
-            reason=reason,
-            is_permanent=is_permanent,
-            added_at=datetime.utcnow(),
-        )
-        db.session.add(entry)
-        db.session.commit()
         logger.info(f"[Blocklist] Added {domain}: {reason}")
     except Exception as e:
         logger.warning(f"[Blocklist] Failed to add domain: {e}")
