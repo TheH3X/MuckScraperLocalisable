@@ -2037,7 +2037,8 @@ def sync_static_ratings():
 def publish_edition():
     """
     Create an Edition record for the current fetch cycle.
-    Determines edition type (night/morning/afternoon/evening) from Eastern time.
+    Determines edition type (night/morning/afternoon/evening) from the
+    configured country timezone.
     Only includes stories that are new since the last edition, or have received
     new articles since then. Prefers multi-article stories and only falls back to
     single-article stories when needed to fill the edition.
@@ -2045,11 +2046,12 @@ def publish_edition():
     """
     from zoneinfo import ZoneInfo
     from aggregator.models import Edition, Story, EditionStory
+    from aggregator.country_config import get_timezone
 
-    eastern = ZoneInfo('America/New_York')
-    now_eastern = datetime.now(eastern)
-    hour = now_eastern.hour
-    today = now_eastern.date()
+    local_tz = ZoneInfo(get_timezone())
+    now_local = datetime.now(local_tz)
+    hour = now_local.hour
+    today = now_local.date()
 
     if 5 <= hour < 12:
         edition_type = 'morning'

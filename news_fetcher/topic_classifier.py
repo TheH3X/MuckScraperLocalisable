@@ -8,7 +8,7 @@ from langfuse.decorators import observe, langfuse_context
 from news_fetcher.llm_client import generate
 
 logger = logging.getLogger(__name__)
-from aggregator.country_config import get_config
+from aggregator.country_config import get_config, get_topics
 
 _cfg = get_config()
 
@@ -50,8 +50,8 @@ def get_valid_topics():
             return [t.name for t in db_topics]
     except Exception as e:
         logger.warning("[Classifier] Could not load topics from DB: %s — falling back to config", e)
-    # Fallback to country config
-    return [t["label"] for t in _cfg.get("topics", [])] or ["Other"]
+    # Fallback to country config (e.g. SA Politics / SA News before seed)
+    return [t["label"] for t in get_topics()] or ["Other"]
 
 
 def get_topic_hints():
