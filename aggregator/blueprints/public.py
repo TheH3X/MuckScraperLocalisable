@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 public = Blueprint("public", __name__)
 
 
-from news_fetcher.summarizer import check_ollama_status
+from news_fetcher.llm_client import check_ollama_status
 
 
 @public.route("/")
