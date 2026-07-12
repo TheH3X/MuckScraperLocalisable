@@ -1,4 +1,4 @@
-/* Bias display components */
+/* Bias display components — full color, no monochrome filters */
 .bias-tag-group {
   display: inline-flex !important;
   align-items: center;
@@ -34,7 +34,7 @@
   background-color: transparent;
   height: 100%;
   border-right: 1px solid var(--paper-border, #333);
-  color: var(--paper-text);
+  color: var(--paper-text, #1a1a1a);
 }
 
 .bias-label-box {
@@ -46,7 +46,7 @@
   font-weight: 700;
   height: 100%;
   border-right: 1px solid var(--paper-border, #333);
-  color: var(--paper-text);
+  color: #fff;
 }
 
 .bias-left {
@@ -74,29 +74,10 @@
   font-weight: 900;
   text-transform: uppercase;
   background-color: rgba(0,0,0,0.06);
-  color: var(--paper-text);
+  color: var(--paper-text, #1a1a1a);
 }
 
 [data-theme="dark"] .source-badge {
   background-color: rgba(255,255,255,0.08);
+  color: var(--paper-text, #e0e0e0);
 }
-
-/* ── Aged newspaper look (Sepia) ─────────────────────────── */
-
-html {
-  /* Lower sepia for less yellow, lower brightness, and reduced saturation for a neutral aged feel */
-  filter: sepia(0.3) contrast(1.05) brightness(0.9) saturate(0.8) !important;
-  background-color: #dcdbd3 !important; /* Neutral grey-beige aged color */
-}
-
-/* Images get compensated to stay crisp and correctly toned */
-img {
-  filter: grayscale(100%) sepia(0.2) contrast(0.9) brightness(0.8) !important;
-}
-
-/* ── End aged newspaper look ────────────────────────────── */
-
-
-
-
-

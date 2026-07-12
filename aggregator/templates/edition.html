@@ -2,760 +2,121 @@
 <!DOCTYPE html>
 <html data-theme="light">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
-    <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon_32.png') }}">
-    <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='favicon_192.png') }}">
-    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='favicon_180.png') }}">
-    <title>{{ edition.edition_type|capitalize }} Edition — {{ edition.date.strftime('%B %d, %Y') }} — MuckScraper</title>
-    <style>
-        :root {
-            --paper:      #fafaf8;
-            --surface:    #ffffff;
-            --text:       #1a1a1a;
-            --text-muted: #57534e;
-            --text-faint: #8a8681;
-            --rule:       #e2e0da;
-            --rule-strong:#1a1a1a;
-            --shadow:     0 6px 18px rgba(0, 0, 0, 0.05);
-            --chip-bg:    #f0eee8;
-            --accent:     #1f2d3d;
-            --accent-soft:#eef1f4;
-
-            --left:         #4a6fa1;
-            --center-left:  #7c9bc2;
-            --center:       #8a8a86;
-            --center-right: #c98858;
-            --right:        #a8493f;
-            --unrated:      #c4c0b8;
-        }
-
-        [data-theme="dark"] {
-            --paper:      #141312;
-            --surface:    #1c1b19;
-            --text:       #ece9e3;
-            --text-muted: #b3aea3;
-            --text-faint: #837e75;
-            --rule:       #322f2a;
-            --rule-strong:#ece9e3;
-            --shadow:     0 6px 18px rgba(0, 0, 0, 0.4);
-            --chip-bg:    #262420;
-            --accent:     #c9d3dd;
-            --accent-soft:#232a30;
-            --unrated:    #4a4640;
-        }
-
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-
-        body {
-            font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-            background: var(--paper);
-            color: var(--text);
-            transition: background 0.2s, color 0.2s;
-            -webkit-font-smoothing: antialiased;
-        }
-
-        a { color: inherit; }
-
-        .headline-font {
-            font-family: Georgia, "Times New Roman", "Noto Serif", serif;
-        }
-
-        /* ── Utility bar ── */
-        .utility-bar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 9px 24px;
-            background: var(--surface);
-            border-bottom: 1px solid var(--rule);
-            font-size: 12px;
-            font-weight: 600;
-        }
-        .utility-left { display: flex; align-items: center; gap: 18px; }
-        .utility-bar a { text-decoration: none; color: var(--text-muted); }
-        .utility-bar a:hover { color: var(--text); text-decoration: underline; }
-
-        .theme-toggle {
-            background: var(--chip-bg);
-            border: 1px solid var(--rule);
-            color: var(--text);
-            padding: 5px 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 11px;
-            font-weight: 600;
-        }
-        .theme-toggle:hover { border-color: var(--text-muted); }
-
-        /* ── Masthead ── */
-        .masthead {
-            text-align: center;
-            padding: 34px 20px 18px;
-        }
-
-        .wordmark {
-            font-family: Georgia, "Times New Roman", serif;
-            font-size: 42px;
-            font-weight: 700;
-            letter-spacing: -0.5px;
-            color: var(--text);
-            text-decoration: none;
-        }
-
-        .edition-line {
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 2.5px;
-            color: var(--text-muted);
-            margin-top: 12px;
-        }
-
-        .edition-date {
-            font-family: Georgia, "Times New Roman", serif;
-            font-size: 20px;
-            font-weight: 700;
-            margin-top: 4px;
-        }
-
-        .edition-page-of {
-            font-size: 11px;
-            font-weight: 600;
-            color: var(--text-faint);
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-top: 6px;
-        }
-
-        .masthead-rule {
-            border: none;
-            border-top: 3px double var(--rule-strong);
-            max-width: 1040px;
-            margin: 16px auto 0;
-        }
-
-        .source-flag {
-            font-size: 9px;
-            font-weight: 700;
-            padding: 1px 5px;
-            border-radius: 3px;
-            border: 1px solid var(--rule);
-            color: var(--text-muted);
-        }
-
-        /* ── Page shell: sidebar + main column ── */
-        .page-shell {
-            max-width: 1040px;
-            margin: 0 auto;
-            padding: 24px 24px 40px;
-            display: flex;
-            gap: 48px;
-            align-items: flex-start;
-        }
-
-        .sidebar {
-            width: 240px;
-            flex-shrink: 0;
-        }
-
-        .main-column {
-            flex: 1;
-            max-width: 700px;
-            min-width: 0;
-        }
-
-        .sidebar-section { margin-bottom: 26px; }
-        .sidebar-heading {
-            font-size: 11px;
-            font-weight: 800;
-            text-transform: uppercase;
-            letter-spacing: 1.2px;
-            color: var(--text-faint);
-            margin-bottom: 10px;
-            padding-bottom: 7px;
-            border-bottom: 1px solid var(--rule);
-        }
-        .sidebar-day { margin-bottom: 10px; }
-        .sidebar-day-label {
-            font-size: 11px;
-            font-weight: 700;
-            color: var(--text-muted);
-            margin-bottom: 3px;
-        }
-        .sidebar-edition-link {
-            display: block;
-            font-size: 12.5px;
-            padding: 3px 0;
-            color: var(--text);
-            text-decoration: none;
-        }
-        .sidebar-edition-link.active { font-weight: 700; color: var(--accent); }
-        .sidebar-edition-link:hover { color: var(--accent); }
-        .sidebar-archive-link {
-            display: inline-block;
-            margin-top: 8px;
-            font-size: 12px;
-            font-weight: 700;
-            color: var(--accent);
-            text-decoration: none;
-        }
-        .sidebar-archive-link:hover { text-decoration: underline; }
-
-        .sidebar-tagkey-item {
-            font-size: 11.5px;
-            color: var(--text-faint);
-            display: flex;
-            align-items: center;
-            gap: 7px;
-            margin-bottom: 7px;
-        }
-
-        .sidebar-about {
-            font-size: 12.5px;
-            color: var(--text-muted);
-            line-height: 1.6;
-        }
-        .sidebar-stats {
-            font-size: 12px;
-            color: var(--text-faint);
-            margin-top: 8px;
-            border-top: 1px solid var(--rule);
-            padding-top: 8px;
-        }
-
-        .page-info-top {
-            text-align: center;
-            font-size: 11px;
-            font-weight: 600;
-            color: var(--text-faint);
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            padding: 18px 0 6px;
-        }
-
-        .story-article {
-            padding: 26px 0;
-            border-bottom: 1px solid var(--rule);
-        }
-        .story-article:first-of-type { padding-top: 20px; }
-        .story-article.in-brief { padding: 14px 0; }
-
-        .story-kicker-row {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            flex-wrap: wrap;
-            margin-bottom: 8px;
-        }
-
-        .kicker {
-            font-size: 10px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-        .kicker.top-story {
-            color: var(--surface);
-            background: var(--accent);
-            padding: 3px 9px;
-            border-radius: 3px;
-        }
-        .kicker.developing {
-            color: var(--accent);
-            border: 1px solid var(--accent);
-            padding: 2px 8px;
-            border-radius: 3px;
-        }
-        .kicker.in-brief {
-            color: var(--text-faint);
-            letter-spacing: 1.2px;
-        }
-
-        .updates-flag {
-            font-size: 10px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: var(--text-muted);
-        }
-        .updates-flag::before { content: "● "; font-size: 8px; }
-
-        .story-meta {
-            font-size: 11.5px;
-            font-weight: 500;
-            color: var(--text-faint);
-        }
-
-        .story-headline {
-            font-weight: 700;
-            line-height: 1.25;
-            letter-spacing: -0.2px;
-            margin-bottom: 12px;
-        }
-        .story-article.top-story .story-headline   { font-size: 32px; margin-bottom: 14px; }
-        .story-article.developing .story-headline  { font-size: 20px; margin-bottom: 10px; }
-        .story-article.in-brief .story-headline    { font-size: 15px; margin-bottom: 4px; font-weight: 700; }
-
-        .story-headline a { text-decoration: none; }
-        .story-headline a:hover { color: var(--accent); text-decoration: underline; }
-
-        .story-photo-wrap { margin-bottom: 6px; }
-        .story-photo-wrap img {
-            width: 100%;
-            display: block;
-        }
-        .story-article.top-story .story-photo-wrap img { max-height: 420px; object-fit: cover; }
-
-        .photo-credit {
-            font-size: 11px;
-            font-style: italic;
-            color: var(--text-faint);
-            margin-bottom: 14px;
-        }
-
-        /* Developing stories use the extra horizontal room: image beside text */
-        .developing-row {
-            display: flex;
-            gap: 20px;
-            align-items: flex-start;
-        }
-        .developing-media {
-            flex: 0 0 220px;
-        }
-        .developing-media img {
-            width: 100%;
-            height: 148px;
-            object-fit: cover;
-            display: block;
-        }
-        .developing-media .photo-credit { margin-top: 5px; margin-bottom: 0; }
-        .developing-body {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .bias-balance-rule {
-            display: flex;
-            height: 3px;
-            overflow: hidden;
-            background: var(--chip-bg);
-            margin-bottom: 14px;
-        }
-        .bias-seg.leftish  { background: var(--left); }
-        .bias-seg.center   { background: var(--center); }
-        .bias-seg.rightish { background: var(--right); }
-        .bias-seg.unrated  { background: var(--unrated); }
-
-        .story-summary {
-            font-family: Georgia, "Times New Roman", serif;
-            line-height: 1.6;
-            color: var(--text);
-        }
-        .story-article.top-story .story-summary  { font-size: 16.5px; margin-bottom: 16px; }
-        .story-article.developing .story-summary { font-size: 14.5px; color: var(--text-muted); margin-bottom: 12px; }
-        .story-article.in-brief .story-summary   { font-size: 13px; color: var(--text-muted); line-height: 1.5; margin-bottom: 2px; }
-
-        .brief-coverage-line {
-            font-size: 12px;
-            color: var(--text-faint);
-        }
-        .view-coverage-link {
-            font-weight: 700;
-            color: var(--accent);
-            text-decoration: none;
-        }
-        .view-coverage-link:hover { text-decoration: underline; }
-
-        .outlet-tag-row {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 7px;
-            margin-top: 2px;
-            margin-bottom: 12px;
-        }
-
-        .outlet-tag {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            font-size: 11.5px;
-            font-weight: 600;
-            padding: 3px 9px;
-            border-radius: 3px;
-            background: var(--chip-bg);
-            color: var(--text);
-        }
-
-        .bias-pill {
-            font-size: 9px;
-            font-weight: 700;
-            padding: 1px 6px;
-            border-radius: 2px;
-            color: #fff;
-            text-transform: uppercase;
-            letter-spacing: 0.3px;
-        }
-        .bias-pill.left         { background: var(--left); }
-        .bias-pill.center-left  { background: var(--center-left); }
-        .bias-pill.center       { background: var(--center); }
-        .bias-pill.center-right { background: var(--center-right); }
-        .bias-pill.right        { background: var(--right); }
-
-        .read-more-row { margin-top: 2px; }
-        .btn-read {
-            display: inline-block;
-            background: var(--accent);
-            color: var(--surface);
-            font-size: 12px;
-            font-weight: 700;
-            letter-spacing: 0.2px;
-            padding: 9px 18px;
-            border-radius: 4px;
-            text-decoration: none;
-        }
-        .btn-read:hover { opacity: 0.85; }
-
-        .link-read {
-            font-size: 12.5px;
-            font-weight: 700;
-            color: var(--accent);
-            text-decoration: none;
-        }
-        .link-read:hover { text-decoration: underline; }
-
-        .empty {
-            text-align: center;
-            padding: 80px 0;
-            color: var(--text-faint);
-            font-style: italic;
-        }
-
-        /* ── Pagination ── */
-        .pagination {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 22px;
-            padding: 28px 0 8px;
-        }
-        .page-btn {
-            font-size: 12.5px;
-            font-weight: 600;
-            text-decoration: none;
-            color: var(--text);
-        }
-        .page-btn:hover { color: var(--accent); text-decoration: underline; }
-        .page-btn.disabled { opacity: 0.35; pointer-events: none; }
-        .page-info { font-size: 11px; font-weight: 700; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.5px; }
-
-        /* ── Edition pager ── */
-        .edition-pager {
-            display: flex;
-            justify-content: space-between;
-            gap: 16px;
-            max-width: 700px;
-            margin: 4px auto 0;
-            padding: 16px 24px 0;
-            border-top: 1px solid var(--rule);
-        }
-        .pager-btn {
-            flex: 1;
-            padding: 10px 0;
-            text-decoration: none;
-            color: var(--text-muted);
-            font-weight: 600;
-            font-size: 12px;
-        }
-        .pager-btn:hover { color: var(--accent); }
-        .pager-btn.next { text-align: right; }
-        .pager-btn.spacer { visibility: hidden; }
-
-        footer.site-footer {
-            text-align: center;
-            padding: 32px 20px 48px;
-            font-size: 12px;
-            color: var(--text-faint);
-        }
-
-        @media (max-width: 860px) {
-            .page-shell { flex-direction: column; padding: 20px 20px 32px; }
-            .sidebar { width: 100%; order: 2; display: flex; flex-wrap: wrap; gap: 32px; }
-            .sidebar-section { flex: 1 1 200px; margin-bottom: 12px; }
-            .main-column { max-width: 100%; order: 1; }
-        }
-
-        @media (max-width: 620px) {
-            .wordmark { font-size: 32px; }
-            .story-article.top-story .story-headline { font-size: 24px; }
-            .page-shell { padding: 4px 16px 32px; }
-            .utility-bar { padding: 10px 16px; flex-wrap: wrap; gap: 8px; }
-            .developing-row { flex-direction: column; }
-            .developing-media { flex-basis: auto; width: 100%; }
-            .developing-media img { height: auto; max-height: 220px; }
-        }
-    </style>
+    {% from 'newspaper_macros.html' import newspaper_head %}
+    {{ newspaper_head(edition.edition_type|capitalize ~ ' Edition — ' ~ edition.date.strftime('%B %d, %Y') ~ ' — MuckScraper News') }}
 </head>
 <body>
 
-<div class="utility-bar">
-    <div class="utility-left">
-        <a href="{{ url_for('public.latest_edition') }}"><strong>MuckScraper</strong></a>
-        <a href="{{ url_for('public.edition_archive') }}">Full Archive</a>
-        <a href="{{ url_for('admin.list_articles') }}">Admin Feed</a>
+{% from 'newspaper_macros.html' import archive_drawer, top_nav, masthead, outlet_bias_tag, theme_script %}
+{{ archive_drawer(recent_editions, edition.id) }}
+
+<div class="container">
+    {{ top_nav() }}
+    {{ masthead() }}
+
+    <div class="edition-bar">
+        <div class="edition-bar-side">&nbsp;</div>
+        <div class="edition-label-display">
+            <div class="edition-name">{{ edition.edition_type|capitalize }} Edition</div>
+            <div class="edition-date">{{ edition.date.strftime('%A, %B %d, %Y')|upper }}</div>
+        </div>
+        <div class="edition-bar-side right">
+            {% if total_pages > 1 %}Page {{ page }} of {{ total_pages }}{% endif %}
+        </div>
     </div>
-    <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙 Dark</button>
-</div>
 
-<div class="masthead">
-    <a class="wordmark" href="{{ url_for('public.latest_edition') }}">MuckScraper</a>
-    <div class="edition-line">{{ edition.edition_type }} Edition</div>
-    <div class="edition-date">{{ edition.date.strftime('%A, %B %d, %Y') }}</div>
-    {% if total_pages > 1 %}<div class="edition-page-of">Page {{ page }} of {{ total_pages }}</div>{% endif %}
-    <hr class="masthead-rule">
-</div>
-
-<div class="page-shell">
-    <aside class="sidebar">
-        <div class="sidebar-section">
-            <div class="sidebar-heading">Recent Editions</div>
-            {% for day, eds in recent_editions|groupby('date') %}
-                <div class="sidebar-day">
-                    <div class="sidebar-day-label">{{ day.strftime('%A, %b %d') }}</div>
-                    {% for e in eds %}
-                        <a class="sidebar-edition-link {% if e.id == edition.id %}active{% endif %}"
-                           href="{{ url_for('public.view_edition', edition_date=e.date.isoformat(), edition_type=e.edition_type) }}">
-                            {{ e.edition_type|capitalize }} Edition
-                        </a>
-                    {% endfor %}
-                </div>
-            {% endfor %}
-            <a class="sidebar-archive-link" href="{{ url_for('public.edition_archive') }}">Full Archive →</a>
-        </div>
-
-        <div class="sidebar-section">
-            <div class="sidebar-heading">Tag Key</div>
-            <div class="sidebar-tagkey-item"><span class="source-flag">AS</span> Curated Bias Rating</div>
-            <div class="sidebar-tagkey-item"><span class="source-flag">AI</span> AI-Generated Rating</div>
-        </div>
-
-        <div class="sidebar-section">
-            <div class="sidebar-heading">About This Edition</div>
-            <p class="sidebar-about">
-                Stories are ranked and outlets balanced across the political
-                spectrum, so no single viewpoint dominates the page.
-            </p>
-            <div class="sidebar-stats">
-                {{ edition_stats.stories }} stories ·
-                {{ edition_stats.articles }} articles ·
-                {{ edition_stats.outlets }} outlets
-            </div>
-        </div>
-    </aside>
-
-    <main class="main-column">
     {% if entries %}
+    <div class="news-grid">
         {% for entry in entries %}
             {% set story = entry.story %}
             {% set edition_story = entry.edition_story %}
-            {% set bias = entry.bias %}
             {% set featured_article = story.articles|selectattr('image_url')|first %}
             {% set image_url = edition_story.source_image_url or (featured_article.image_url if featured_article else None) %}
-            {% set outlet_count = story.unique_outlets|length %}
             {% set article_count = story.articles|length %}
+            {% set outlet_count = story.unique_outlets|length %}
 
-            <article class="story-article {{ entry.kind_class }}">
-                <div class="story-kicker-row">
-                    <span class="kicker {{ entry.kind_class }}">{{ entry.kind_label }}</span>
-                    <span class="story-meta">
-                        {{ article_count }} Source Article{{ 's' if article_count != 1 else '' }}
-                        {% if story.last_updated %}
-                            · Last Updated:
-                            <span class="local-date" data-utc="{{ story.last_updated.isoformat() }}Z">{{ story.last_updated.strftime('%b %d, %Y %H:%M') }}</span>
-                        {% endif %}
-                    </span>
+            <article class="story-block {{ entry.kind_class }}{% if entry.kind_class == 'top-story' %} story-lead{% endif %}">
+                <div class="story-meta">
+                    {{ entry.kind_label }}
+                    · {{ article_count }} Source Article{{ 's' if article_count != 1 else '' }}
+                    {% if story.last_updated %}
+                        · Last Updated:
+                        <span class="local-date" data-utc="{{ story.last_updated.isoformat() }}Z">{{ story.last_updated.strftime('%b %d, %Y %H:%M') }}</span>
+                    {% endif %}
                     {% if edition_story.has_updates %}<span class="updates-flag">New Updates</span>{% endif %}
                 </div>
 
-                {% if entry.kind_class == 'developing' %}
-                    <div class="developing-row">
-                        {% if image_url %}
-                        <div class="developing-media">
-                            <img src="{{ image_url }}" alt="" loading="lazy">
-                            {% if featured_article and featured_article.outlet %}
-                                <div class="photo-credit">Photo: {{ featured_article.outlet.name }}</div>
-                            {% endif %}
-                        </div>
-                        {% endif %}
-                        <div class="developing-body">
-                            <h2 class="story-headline headline-font">
-                                <a href="{{ url_for('public.view_story', story_id=story.id) }}">{{ story.display_headline }}</a>
-                            </h2>
+                <h2><a href="{{ url_for('public.view_story', story_id=story.id) }}">{{ story.display_headline }}</a></h2>
 
-                            {% if bias.counts.leftish or bias.counts.rightish or bias.counts.center %}
-                            <div class="bias-balance-rule">
-                                {% if bias.percents.leftish %}<span class="bias-seg leftish" style="width:{{ bias.percents.leftish }}%"></span>{% endif %}
-                                {% if bias.percents.center %}<span class="bias-seg center" style="width:{{ bias.percents.center }}%"></span>{% endif %}
-                                {% if bias.percents.rightish %}<span class="bias-seg rightish" style="width:{{ bias.percents.rightish }}%"></span>{% endif %}
-                                {% if bias.percents.unrated %}<span class="bias-seg unrated" style="width:{{ bias.percents.unrated }}%"></span>{% endif %}
-                            </div>
-                            {% endif %}
+                {% if image_url and entry.kind_class in ['top-story', 'developing'] %}
+                <div class="image-box">
+                    <img src="{{ image_url }}" alt="" loading="lazy">
+                </div>
+                {% if featured_article and featured_article.outlet %}
+                    <div class="photo-credit">Photo: {{ featured_article.outlet.name }}</div>
+                {% endif %}
+                {% endif %}
 
-                            {% if story.summary %}
-                                <p class="story-summary">{{ story.summary|truncate(260) }}</p>
-                            {% elif story.title %}
-                                <p class="story-summary">{{ story.title }}</p>
-                            {% endif %}
-
-                            <div class="outlet-tag-row">
-                                {% for outlet in story.unique_outlets[:4] %}
-                                    <span class="outlet-tag">
-                                        {{ outlet.name }}
-                                        {% if outlet.bias_score is not none %}
-                                            {% set bucket = outlet.bias_score|round|int %}
-                                            <span class="bias-pill {{ 'left' if bucket == 1 else 'center-left' if bucket == 2 else 'center-right' if bucket == 4 else 'right' if bucket >= 5 else 'center' }}">{{ outlet.bias_score|bias_short_label }}</span>
-                                            <span class="source-flag">{{ 'AS' if outlet.bias_source == 'static' else 'AI' }}</span>
-                                        {% endif %}
-                                    </span>
-                                {% endfor %}
-                            </div>
-
-                            <div class="read-more-row">
-                                <a class="link-read" href="{{ url_for('public.view_story', story_id=story.id) }}">Read Full Coverage →</a>
-                            </div>
-                        </div>
-                    </div>
+                {% if entry.kind_class == 'in-brief' %}
+                    <p class="story-summary">{{ (story.summary or story.title)|truncate(160) }}</p>
+                    <p class="brief-line">
+                        {{ article_count }} source article{{ 's' if article_count != 1 else '' }} from {{ outlet_count }} outlet{{ 's' if outlet_count != 1 else '' }}.
+                        <a class="view-coverage-link" href="{{ url_for('public.view_story', story_id=story.id) }}">View Full Coverage</a>
+                    </p>
                 {% else %}
-                    <h2 class="story-headline headline-font">
-                        <a href="{{ url_for('public.view_story', story_id=story.id) }}">{{ story.display_headline }}</a>
-                    </h2>
-
-                    {% if image_url and entry.kind_class == 'top-story' %}
-                        <div class="story-photo-wrap">
-                            <img src="{{ image_url }}" alt="" loading="lazy">
-                        </div>
-                        {% if featured_article and featured_article.outlet %}
-                            <div class="photo-credit">Photo: {{ featured_article.outlet.name }}</div>
-                        {% endif %}
+                    {% if story.summary %}
+                        <p class="story-summary">{{ story.summary|truncate(420 if entry.kind_class == 'top-story' else 260) }}</p>
+                    {% elif story.title %}
+                        <p class="story-summary">{{ story.title }}</p>
                     {% endif %}
 
-                    {% if entry.kind_class == 'top-story' and (bias.counts.leftish or bias.counts.rightish or bias.counts.center) %}
-                    <div class="bias-balance-rule">
-                        {% if bias.percents.leftish %}<span class="bias-seg leftish" style="width:{{ bias.percents.leftish }}%"></span>{% endif %}
-                        {% if bias.percents.center %}<span class="bias-seg center" style="width:{{ bias.percents.center }}%"></span>{% endif %}
-                        {% if bias.percents.rightish %}<span class="bias-seg rightish" style="width:{{ bias.percents.rightish }}%"></span>{% endif %}
-                        {% if bias.percents.unrated %}<span class="bias-seg unrated" style="width:{{ bias.percents.unrated }}%"></span>{% endif %}
+                    <div class="outlet-tags">
+                        {% for outlet in story.unique_outlets[:6] %}
+                            {{ outlet_bias_tag(outlet) }}
+                        {% endfor %}
                     </div>
-                    {% endif %}
 
-                    {% if entry.kind_class == 'in-brief' %}
-                        <p class="story-summary">{{ (story.summary or story.title)|truncate(140) }}</p>
-                        <p class="brief-coverage-line">
-                            {{ article_count }} source article{{ 's' if article_count != 1 else '' }} from {{ outlet_count }} outlet{{ 's' if outlet_count != 1 else '' }}.
-                            <a class="view-coverage-link" href="{{ url_for('public.view_story', story_id=story.id) }}">View Full Coverage →</a>
-                        </p>
-                    {% else %}
-                        {% if story.summary %}
-                            <p class="story-summary">{{ story.summary|truncate(420) }}</p>
-                        {% elif story.title %}
-                            <p class="story-summary">{{ story.title }}</p>
-                        {% endif %}
-
-                        <div class="outlet-tag-row">
-                            {% for outlet in story.unique_outlets[:6] %}
-                                <span class="outlet-tag">
-                                    {{ outlet.name }}
-                                    {% if outlet.bias_score is not none %}
-                                        {% set bucket = outlet.bias_score|round|int %}
-                                        <span class="bias-pill {{ 'left' if bucket == 1 else 'center-left' if bucket == 2 else 'center-right' if bucket == 4 else 'right' if bucket >= 5 else 'center' }}">{{ outlet.bias_score|bias_short_label }}</span>
-                                        <span class="source-flag">{{ 'AS' if outlet.bias_source == 'static' else 'AI' }}</span>
-                                    {% endif %}
-                                </span>
-                            {% endfor %}
-                        </div>
-
-                        <div class="read-more-row">
-                            <a class="btn-read" href="{{ url_for('public.view_story', story_id=story.id) }}">Read Full Coverage →</a>
-                        </div>
-                    {% endif %}
+                    <a class="btn-action" href="{{ url_for('public.view_story', story_id=story.id) }}">Read Full Coverage</a>
                 {% endif %}
             </article>
         {% endfor %}
+    </div>
     {% else %}
-        <div class="empty">
-            <p>This edition has no stories yet.</p>
-        </div>
+        <div class="empty-state">This edition has no stories yet.</div>
     {% endif %}
 
     {% if total_pages > 1 %}
     <div class="pagination">
         {% if page > 1 %}
-            <a class="page-btn" href="{{ url_for('public.view_edition', edition_date=edition.date.isoformat(), edition_type=edition.edition_type, page=page-1) }}">← Previous</a>
+            <a class="page-btn" href="{{ url_for('public.view_edition', edition_date=edition.date.isoformat(), edition_type=edition.edition_type, page=page-1) }}">Previous Page</a>
         {% else %}
-            <span class="page-btn disabled">← Previous</span>
+            <span class="page-btn disabled">Previous Page</span>
         {% endif %}
-
         <span class="page-info">Page {{ page }} of {{ total_pages }}</span>
-
         {% if page < total_pages %}
-            <a class="page-btn" href="{{ url_for('public.view_edition', edition_date=edition.date.isoformat(), edition_type=edition.edition_type, page=page+1) }}">Next →</a>
+            <a class="page-btn" href="{{ url_for('public.view_edition', edition_date=edition.date.isoformat(), edition_type=edition.edition_type, page=page+1) }}">Next Page</a>
         {% else %}
-            <span class="page-btn disabled">Next →</span>
+            <span class="page-btn disabled">Next Page</span>
         {% endif %}
     </div>
     {% endif %}
-    </main>
-</div>
 
-<div class="edition-pager">
-    {% if prev_edition %}
-        <a class="pager-btn prev" href="{{ url_for('public.view_edition', edition_date=prev_edition.date.isoformat(), edition_type=prev_edition.edition_type) }}">
-            ← {{ prev_edition.date.strftime('%b %d') }} {{ prev_edition.edition_type|capitalize }}
-        </a>
-    {% else %}
-        <span class="pager-btn spacer"></span>
-    {% endif %}
-
-    {% if next_edition %}
-        <a class="pager-btn next" href="{{ url_for('public.view_edition', edition_date=next_edition.date.isoformat(), edition_type=next_edition.edition_type) }}">
-            {{ next_edition.date.strftime('%b %d') }} {{ next_edition.edition_type|capitalize }} →
-        </a>
-    {% else %}
-        <span class="pager-btn spacer"></span>
-    {% endif %}
+    <div class="pagination" style="border-top: none; padding-top: 0;">
+        {% if prev_edition %}
+            <a class="page-btn" href="{{ url_for('public.view_edition', edition_date=prev_edition.date.isoformat(), edition_type=prev_edition.edition_type) }}">← {{ prev_edition.date.strftime('%b %d') }} {{ prev_edition.edition_type|capitalize }}</a>
+        {% else %}
+            <span class="page-btn disabled">← Previous Edition</span>
+        {% endif %}
+        {% if next_edition %}
+            <a class="page-btn" href="{{ url_for('public.view_edition', edition_date=next_edition.date.isoformat(), edition_type=next_edition.edition_type) }}">{{ next_edition.date.strftime('%b %d') }} {{ next_edition.edition_type|capitalize }} →</a>
+        {% else %}
+            <span class="page-btn disabled">Next Edition →</span>
+        {% endif %}
+    </div>
 </div>
 
 <footer class="site-footer">MuckScraper — self-hosted, balanced news editions.</footer>
-
-<script>
-    function applyTheme(theme) {
-        document.documentElement.setAttribute('data-theme', theme);
-        const btn = document.getElementById('theme-toggle');
-        if (btn) btn.textContent = theme === 'dark' ? '☀️ Light' : '🌙 Dark';
-    }
-
-    function toggleTheme() {
-        const current = document.documentElement.getAttribute('data-theme');
-        const next = current === 'dark' ? 'light' : 'dark';
-        localStorage.setItem('muckscraper-theme', next);
-        applyTheme(next);
-    }
-
-    applyTheme(localStorage.getItem('muckscraper-theme') || 'light');
-
-    function convertToLocalTime() {
-        document.querySelectorAll('.local-date').forEach(el => {
-            const utcDate = el.getAttribute('data-utc');
-            if (!utcDate) return;
-            const date = new Date(utcDate);
-            const options = { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false };
-            el.textContent = date.toLocaleString(undefined, options).replace(',', '');
-        });
-    }
-    document.addEventListener('DOMContentLoaded', convertToLocalTime);
-</script>
-
+{{ theme_script() }}
 </body>
 </html>

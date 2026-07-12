@@ -12,12 +12,12 @@ logger = logging.getLogger(__name__)
 public = Blueprint("public", __name__)
 
 
-from news_fetcher.summarizer import check_ollama_status
+from news_fetcher.llm_client import check_ollama_status
 
 
 @public.route("/")
 def index():
-    return redirect(url_for("admin.list_articles"))
+    return redirect(url_for("public.latest_edition"))
 
 
 @public.route("/feed-headlines")
@@ -57,6 +57,14 @@ def _edition_sort_key(edition):
     return (edition.date, EDITION_TYPE_ORDER.get(edition.edition_type, 99))
 
 
+def _recent_editions(limit=10):
+    return sorted(
+        _published_editions_query().all(),
+        key=_edition_sort_key,
+        reverse=True,
+    )[:limit]
+
+
 def _story_kind(rank, story, edition_story):
     """Classify a ranked story the way a print edition would label it."""
     if rank == 1:
@@ -93,6 +101,7 @@ def edition_archive():
     return render_template(
         "edition_archive.html",
         grouped_editions=sorted(grouped.items(), key=lambda item: item[0], reverse=True),
+        recent_editions=_recent_editions(),
     )
 
 
@@ -182,7 +191,12 @@ def view_story(story_id):
 
     apply_aggregator_filter(story)
 
-    return render_template("story.html", story=story, ollama_online=ollama_online)
+    return render_template(
+        "story.html",
+        story=story,
+        ollama_online=ollama_online,
+        recent_editions=_recent_editions(),
+    )
 
 
 @public.route("/article/<int:article_id>")
@@ -190,7 +204,12 @@ def view_article(article_id):
     article = Article.query.get_or_404(article_id)
     ollama_online = check_ollama_status()
 
-    return render_template("article.html", article=article, ollama_online=ollama_online)
+    return render_template(
+        "article.html",
+        article=article,
+        ollama_online=ollama_online,
+        recent_editions=_recent_editions(),
+    )
 
 
 @public.route("/ollama-status")

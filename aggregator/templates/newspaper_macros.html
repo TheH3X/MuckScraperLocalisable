@@ -1,0 +1,126 @@
+{% macro newspaper_head(title) %}
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+<link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon_32.png') }}">
+<link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='favicon_192.png') }}">
+<link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='favicon_180.png') }}">
+<title>{{ title }}</title>
+<link href="https://fonts.cdnfonts.com/css/chomsky" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@400;700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/newspaper.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+{% endmacro %}
+
+
+{% macro archive_drawer(recent_editions, current_edition_id=None) %}
+<div class="archive-overlay" id="archive-overlay" onclick="toggleArchive()"></div>
+<div class="archive-drawer" id="archive-drawer">
+    <button class="archive-close" onclick="toggleArchive()" aria-label="Close menu">×</button>
+    <div class="archive-drawer-header">
+        <div class="eyebrow">The</div>
+        <div class="title">Menu</div>
+    </div>
+
+    <div class="archive-section-label">Tag Key</div>
+    <div class="tag-key-item"><span class="source-badge">AS</span> Curated Bias Rating</div>
+    <div class="tag-key-item"><span class="source-badge">AI</span> AI-Generated Rating</div>
+
+    <div class="archive-section-label">Recent Editions</div>
+    {% for day, eds in recent_editions|groupby('date') %}
+        <div class="archive-day-label">{{ day.strftime('%A, %b %d') }}</div>
+        {% for e in eds %}
+            <a class="archive-link {% if current_edition_id and e.id == current_edition_id %}active{% endif %}"
+               href="{{ url_for('public.view_edition', edition_date=e.date.isoformat(), edition_type=e.edition_type) }}">
+                {{ e.edition_type|capitalize }} Edition
+            </a>
+        {% endfor %}
+    {% endfor %}
+
+    <div class="archive-section-label" style="margin-top: 24px;">Navigation</div>
+    <a class="archive-link" href="{{ url_for('public.edition_archive') }}">Full Archive</a>
+    <a class="archive-link" href="{{ url_for('admin.list_articles') }}">Admin Feed</a>
+</div>
+{% endmacro %}
+
+
+{% macro top_nav(show_story_link=false, show_headlines_link=false) %}
+<div class="top-nav">
+    <div class="top-nav-left">
+        <button class="nav-btn" type="button" onclick="toggleArchive()">Menu</button>
+        {% if show_headlines_link %}
+            <a class="nav-btn" href="{{ url_for('public.latest_edition') }}">Headlines</a>
+        {% endif %}
+        {% if show_story_link %}
+            <a class="nav-btn" href="{{ url_for('public.latest_edition') }}">Story</a>
+        {% endif %}
+    </div>
+    <button class="theme-toggle" id="theme-toggle" type="button" onclick="toggleTheme()">Dark Mode</button>
+</div>
+{% endmacro %}
+
+
+{% macro masthead(subtitle=None) %}
+<div class="masthead">
+    <div class="masthead-links">
+        <a href="{{ url_for('admin.list_articles') }}">About This Paper</a>
+        <span>/</span>
+        <a href="{{ url_for('public.edition_archive') }}">Sources</a>
+    </div>
+    <a class="wordmark" href="{{ url_for('public.latest_edition') }}">MuckScraper News</a>
+    {% if subtitle %}
+        <div class="section-label">{{ subtitle }}</div>
+    {% else %}
+        <div class="slogan">All the muck that's fit to scrape</div>
+    {% endif %}
+</div>
+{% endmacro %}
+
+
+{% macro outlet_bias_tag(outlet) %}
+{% if outlet %}
+<span class="bias-tag-group">
+    <span class="outlet-name-box">{{ outlet.name }}</span>
+    {% if outlet.bias_score is not none %}
+        <span class="bias-label-box {{ bias_color_class(outlet.bias_score) }}">{{ outlet.bias_score|bias_short_label }}</span>
+        <span class="source-badge" title="{{ 'Curated rating' if outlet.bias_source == 'static' else 'AI-generated rating' }}">{{ 'AS' if outlet.bias_source == 'static' else 'AI' }}</span>
+    {% endif %}
+</span>
+{% endif %}
+{% endmacro %}
+
+
+{% macro theme_script() %}
+<script>
+    function applyTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        const btn = document.getElementById('theme-toggle');
+        if (btn) btn.textContent = theme === 'dark' ? 'Light Mode' : 'Dark Mode';
+    }
+
+    function toggleTheme() {
+        const current = document.documentElement.getAttribute('data-theme');
+        const next = current === 'dark' ? 'light' : 'dark';
+        localStorage.setItem('muckscraper-theme', next);
+        applyTheme(next);
+    }
+
+    function toggleArchive() {
+        document.getElementById('archive-drawer').classList.toggle('open');
+        document.getElementById('archive-overlay').classList.toggle('show');
+    }
+
+    applyTheme(localStorage.getItem('muckscraper-theme') || 'light');
+
+    function convertToLocalTime() {
+        document.querySelectorAll('.local-date').forEach(el => {
+            const utcDate = el.getAttribute('data-utc');
+            if (!utcDate) return;
+            const date = new Date(utcDate);
+            const options = { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false };
+            el.textContent = date.toLocaleString(undefined, options).replace(',', '');
+        });
+    }
+    document.addEventListener('DOMContentLoaded', convertToLocalTime);
+</script>
+{% endmacro %}
