@@ -263,5 +263,7 @@ class EditionStory(db.Model):
     image_width             = db.Column(db.Integer, nullable=True)
     image_height            = db.Column(db.Integer, nullable=True)
     image_bytes             = db.Column(db.Integer, nullable=True)
+    lead_article_id         = db.Column(db.Integer, db.ForeignKey('articles.id'), nullable=True)
 
     story = db.relationship('Story', back_populates='edition_stories', lazy='joined', overlaps="edition_stories,story_ref")
+    lead_article = db.relationship('Article', foreign_keys=[lead_article_id], lazy='joined')

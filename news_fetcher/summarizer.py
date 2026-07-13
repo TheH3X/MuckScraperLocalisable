@@ -176,12 +176,41 @@ def _select_story_prompt_articles(story, limit=10):
     """
     Return articles to use for story-level LLM prompts.
 
-    This is intentionally conservative: it only removes clear outliers from
-    multi-source clusters and does not alter persisted story membership.
+    Hard-excludes paywalled/inaccessible articles first, then removes clear
+    outliers from multi-source clusters. Does not alter persisted membership.
     """
-    articles = list(story.articles[:limit])
+    from aggregator.article_signals import (
+        accessibility_failure_reason,
+    )
+
+    all_articles = list(story.articles)
+    inaccessible_excluded = []
+    accessible_pool = []
+    for article in all_articles:
+        # for_lead=False: still allow non-roundup content that clears wall checks
+        reason = accessibility_failure_reason(article, for_lead=False)
+        if reason is not None:
+            inaccessible_excluded.append(article)
+        else:
+            accessible_pool.append(article)
+
+    if inaccessible_excluded:
+        logger.info(
+            "  [StoryFilter] Excluding %s inaccessible article(s) from story %s prompt: %s",
+            len(inaccessible_excluded),
+            getattr(story, "id", "unknown"),
+            "; ".join(
+                f"{(article.title or '')[:60]} ({accessibility_failure_reason(article, for_lead=False)})"
+                for article in inaccessible_excluded[:5]
+            ),
+        )
+
+    articles = accessible_pool[:limit]
+    if not articles:
+        return [], inaccessible_excluded
+
     if len(articles) < 3:
-        return articles, []
+        return articles, inaccessible_excluded
 
     token_sets = [_story_filter_tokens(_article_filter_text(article)) for article in articles]
     story_tokens = _story_filter_tokens(" ".join([story.headline or "", story.title or ""]))
@@ -205,7 +234,7 @@ def _select_story_prompt_articles(story, limit=10):
 
     anchor_tokens = token_sets[anchor_index]
     selected = []
-    excluded = []
+    outlier_excluded = []
     for article, tokens in zip(articles, token_sets):
         anchor_similarity = _jaccard(tokens, anchor_tokens)
         story_similarity = _jaccard(tokens, story_tokens)
@@ -221,20 +250,20 @@ def _select_story_prompt_articles(story, limit=10):
         if include:
             selected.append(article)
         else:
-            excluded.append(article)
+            outlier_excluded.append(article)
 
     # Avoid starving the prompt on small or unusually diverse stories.
     if len(selected) < max(2, len(articles) // 2):
-        return articles, []
+        return articles, inaccessible_excluded
 
-    if excluded:
+    if outlier_excluded:
         logger.info(
             "  [StoryFilter] Excluding %s likely outlier article(s) from story %s prompt: %s",
-            len(excluded),
+            len(outlier_excluded),
             getattr(story, "id", "unknown"),
-            "; ".join((article.title or "")[:80] for article in excluded),
+            "; ".join((article.title or "")[:80] for article in outlier_excluded),
         )
-    return selected, excluded
+    return selected, inaccessible_excluded + outlier_excluded
 
 
 def get_topics_list(obj):

@@ -2,7 +2,17 @@
 # news_fetcher/fetch_and_store_articles.py
 
 from aggregator import create_app, db
-from aggregator.article_signals import ROUNDUP_TITLE_PATTERNS, bias_bucket_for_score, bias_side_for_score, is_roundup_article, low_value_article_reason
+from aggregator.article_signals import (
+    ROUNDUP_TITLE_PATTERNS,
+    bias_bucket_for_score,
+    bias_side_for_score,
+    is_article_accessible,
+    is_developing_story,
+    is_roundup_article,
+    low_value_article_reason,
+    select_lead_article,
+    story_earns_deep_report,
+)
 from aggregator.models import Article, Outlet, Story, Topic
 
 from news_fetcher.outlet_bias_llm import get_outlet_bias_from_llm
@@ -1392,7 +1402,7 @@ def regroup_ungrouped_stories():
 
 
 def generate_missing_deep_reports(batch_size=5):
-    """Find multi-article stories picked for headlines that don't have deep reports."""
+    """Find multi-article contested stories that earn deep reports but don't have them."""
     if not check_ollama_status():
         logger.info("Ollama offline, skipping deep report generation.")
         return
@@ -1401,20 +1411,21 @@ def generate_missing_deep_reports(batch_size=5):
     from datetime import datetime, timedelta
     cutoff = datetime.utcnow() - timedelta(days=2)
 
-    # Only target stories with a headline_score > 0 (meaning they were picked by the ranker)
-    undissected = Story.query.join(Article).group_by(Story.id).having(
-        func.count(Article.id) >= 2
+    # Prefer larger recent clusters; gate on story shape (mixed coverage), not ranker alone.
+    candidates = Story.query.join(Article).group_by(Story.id).having(
+        func.count(Article.id) >= 3
     ).filter(
-        Story.headline_score > 0,
         Story.created_at >= cutoff,
         (Story.deep_report == None) | (Story.deep_report == "")
-    ).order_by(Story.headline_score.desc()).limit(batch_size).all()
+    ).order_by(Story.headline_score.desc()).limit(batch_size * 3).all()
+
+    undissected = [s for s in candidates if story_earns_deep_report(s)][:batch_size]
 
     if not undissected:
-        logger.info("No headline stories need deep reports.")
+        logger.info("No contested multi-source stories need deep reports.")
         return
 
-    logger.info(f"Generating deep reports for {len(undissected)} headline stories...")
+    logger.info(f"Generating deep reports for {len(undissected)} contested stories...")
     from news_fetcher.summarizer import generate_deep_report
     for story in undissected:
         report = generate_deep_report(story)
@@ -1888,7 +1899,8 @@ def process_current_edition():
 
     logger.info(f"[Processor] Processing {len(stories)} stories from {latest_edition.edition_type} edition...")
 
-    STALE_ARTICLE_THRESHOLD = 3  # new articles needed to trigger reanalysis
+    STALE_ARTICLE_THRESHOLD = 3  # new articles needed to trigger reanalysis (non-developing)
+    DEVELOPING_STALE_THRESHOLD = 1  # developing stories refresh on any new accessible article
 
     for story in stories:
         article_count = len(story.articles)
@@ -1901,28 +1913,45 @@ def process_current_edition():
             # Check if analysis is stale — enough new articles arrived
             # since the last time this story was summarized
             if story.summary_generated_at and article_count >= 2:
-                new_article_count = sum(
-                    1 for a in story.articles
-                    if a.fetched_at and a.fetched_at > story.summary_generated_at
+                new_accessible = [
+                    a for a in story.articles
+                    if a.fetched_at
+                    and a.fetched_at > story.summary_generated_at
+                    and is_article_accessible(a, for_lead=False)
+                ]
+                new_article_count = len(new_accessible)
+                developing = is_developing_story(story)
+                stale_threshold = (
+                    DEVELOPING_STALE_THRESHOLD if developing else STALE_ARTICLE_THRESHOLD
                 )
-                if new_article_count >= STALE_ARTICLE_THRESHOLD:
+                if new_article_count >= stale_threshold:
                     logger.info(
-                        f"  [Processor] Story stale ({new_article_count} new articles "
-                        f"since last analysis): {story.title[:60]}"
+                        f"  [Processor] Story stale ({new_article_count} new accessible "
+                        f"articles since last analysis"
+                        f"{', developing' if developing else ''}): {story.title[:60]}"
                     )
                     story.summary = None
                     story.deep_report = None
                     story_is_stale = True
                     metrics["stale_stories_reset"] += 1
 
+            earns_deep = story_earns_deep_report(story)
+            # Drop stale generic analyses that no longer earn a deep report.
+            if story.deep_report and not earns_deep:
+                story.deep_report = None
+                db.session.commit()
+
             if article_count >= 2:
-                story_outputs_ready = bool(story.summary) and bool(story.deep_report)
+                story_outputs_ready = bool(story.summary) and (
+                    bool(story.deep_report) if earns_deep else True
+                )
             else:
                 story_outputs_ready = bool(story.summary)
 
             missing_child_summaries = (
                 article_count < 2
-                or not (story.summary and story.deep_report)
+                or not story.summary
+                or (earns_deep and not story.deep_report)
             ) and any(
                 article.content and not article.summary
                 for article in story.articles
@@ -1942,7 +1971,7 @@ def process_current_edition():
                         metrics["story_summaries_generated"] += 1
                         logger.info(f"  [Processor] Story summary: {story.title[:60]}")
 
-                if not story.deep_report and (story.headline_score or 0) > 0:
+                if not story.deep_report and earns_deep:
                     report = generate_deep_report(story)
                     if report:
                         story.deep_report = report
@@ -1967,7 +1996,7 @@ def process_current_edition():
 
             db.session.commit()
             skip_child_summaries = (
-                article_count >= 2 and story.summary and story.deep_report
+                article_count >= 2 and story.summary and (story.deep_report or not earns_deep)
             )
             for article in story.articles:
                 if skip_child_summaries:
@@ -2344,7 +2373,27 @@ def publish_edition():
             rank=rank,
             headline_score_at_publish=story.headline_score,
             has_updates=has_updates,
+            lead_article_id=None,
         )
+        # Snapshot accessible lead at publish so edition cards don't drift overnight.
+        try:
+            from aggregator.story_view import apply_aggregator_filter
+            apply_aggregator_filter(story)
+            lead = getattr(story, "lead_article", None) or select_lead_article(
+                story, edition_story=es
+            )
+            if lead is not None:
+                es.lead_article_id = lead.id
+                if lead.image_url and not es.source_image_url:
+                    es.source_image_url = lead.image_url
+                    if lead.outlet:
+                        es.image_credit_text = lead.outlet.name
+        except Exception as lead_err:
+            logger.warning(
+                "[Edition] Failed to snapshot lead for story %s: %s",
+                story.id,
+                lead_err,
+            )
         db.session.add(es)
 
     db.session.commit()

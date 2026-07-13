@@ -122,12 +122,19 @@ def view_edition(edition_date, edition_type):
         story = edition_story.story
         if not story:
             continue
-        apply_aggregator_filter(story)
+        apply_aggregator_filter(story, edition_story=edition_story)
+        # Prefer the lead snapped at publish time so cards stay stable.
+        lead = edition_story.lead_article
+        if lead is None:
+            lead = getattr(story, "lead_article", None)
+        else:
+            story.lead_article = lead
         kind_class, kind_label = _story_kind(rank, story, edition_story)
         entries.append({
             "rank": rank,
             "edition_story": edition_story,
             "story": story,
+            "lead_article": lead,
             "bias": compute_bias_breakdown(story),
             "kind_class": kind_class,
             "kind_label": kind_label,

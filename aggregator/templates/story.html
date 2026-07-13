@@ -12,7 +12,7 @@
 
 <div class="container narrow">
     {{ top_nav(show_headlines_link=true) }}
-    {{ masthead('Full Coverage') }}
+    {{ masthead('Coverage') }}
 
     <div class="reader-header">
         <div class="reader-meta">
@@ -24,6 +24,13 @@
             {% endif %}
         </div>
         <h1>{{ story.display_headline }}</h1>
+        {% if story.lead_article and story.lead_article.url %}
+        <p class="brief-line" style="margin-top: 0.75rem;">
+            <a class="btn-action" href="{{ story.lead_article.url }}" target="_blank" rel="noopener noreferrer">
+                Read on {{ story.lead_article.outlet.name if story.lead_article.outlet else 'source' }}
+            </a>
+        </p>
+        {% endif %}
     </div>
 
     {% if story.scrape_quality and story.scrape_quality.total > 0 %}
@@ -41,6 +48,7 @@
     </div>
     {% endif %}
 
+    {% if story.summary or not ollama_online %}
     <div class="analysis-section">
         <div class="analysis-label">Executive Summary</div>
         <div class="analysis-body">
@@ -51,46 +59,55 @@
                 {% endfor %}
             {% elif not ollama_online %}
                 <p><em>Summary will be generated when Ollama is back online.</em></p>
-            {% else %}
-                <p><em>No executive summary has been generated yet.</em></p>
             {% endif %}
         </div>
     </div>
+    {% endif %}
 
+    {% if story.deep_report %}
     <div class="analysis-section">
         <div class="analysis-label">Multi-Source Analysis</div>
         <div class="analysis-body">
-            {% if story.deep_report %}
-                {% for line in story.deep_report.split('\n') %}
-                    {% set l = line.strip() %}
-                    {% if l %}
-                        {% if ':' in l and l.split(':')[0].strip()|length < 35 %}
-                            {% set label = l.split(':', 1)[0].strip() %}
-                            {% set rest = l.split(':', 1)[1].strip() %}
-                            <p><strong>{{ label }}:</strong> {{ rest }}</p>
-                        {% else %}
-                            <p>{{ l }}</p>
-                        {% endif %}
+            {% for line in story.deep_report.split('\n') %}
+                {% set l = line.strip() %}
+                {% if l %}
+                    {% if ':' in l and l.split(':')[0].strip()|length < 35 %}
+                        {% set label = l.split(':', 1)[0].strip() %}
+                        {% set rest = l.split(':', 1)[1].strip() %}
+                        <p><strong>{{ label }}:</strong> {{ rest }}</p>
+                    {% else %}
+                        <p>{{ l }}</p>
                     {% endif %}
-                {% endfor %}
-            {% elif not ollama_online %}
-                <p><em>Analysis will be generated when Ollama is back online.</em></p>
-            {% else %}
-                <p><em>No multi-source analysis has been generated yet.</em></p>
-            {% endif %}
+                {% endif %}
+            {% endfor %}
         </div>
     </div>
+    {% endif %}
 
-    <div class="source-list-heading">Full Coverage &amp; Source Material</div>
+    <div class="source-list-heading">Sources</div>
     {% for article in story.display_articles %}
     <div class="source-item">
-        <h3><a href="{{ url_for('public.view_article', article_id=article.id) }}">{{ article.title }}</a></h3>
+        <h3>
+            {% if article.url %}
+            <a href="{{ article.url }}" target="_blank" rel="noopener noreferrer">{{ article.title }}</a>
+            {% else %}
+            <a href="{{ url_for('public.view_article', article_id=article.id) }}">{{ article.title }}</a>
+            {% endif %}
+        </h3>
         <div class="outlet-tags">
             {{ outlet_bias_tag(article.outlet) }}
+            {% if article.accessibility_reason %}
+            <span class="reader-meta" style="margin-left: 0.5rem;">Could not read full text (paywall or block)</span>
+            {% endif %}
+            {% if story.lead_article and article.id == story.lead_article.id %}
+            <span class="reader-meta" style="margin-left: 0.5rem;">Lead</span>
+            {% endif %}
         </div>
         <div class="source-links">
-            <a href="{{ url_for('public.view_article', article_id=article.id) }}">Full Read</a>
-            <a href="{{ article.url }}" target="_blank" rel="noopener">Original Article</a>
+            {% if article.url %}
+            <a href="{{ article.url }}" target="_blank" rel="noopener noreferrer">Original Article</a>
+            {% endif %}
+            <a href="{{ url_for('public.view_article', article_id=article.id) }}">Cached Read</a>
         </div>
     </div>
     {% endfor %}

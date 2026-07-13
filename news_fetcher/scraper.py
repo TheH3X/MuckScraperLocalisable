@@ -104,6 +104,10 @@ STRONG_BAD_SCRAPE_INDICATORS = [
     "your access to this article",
     "to continue reading, please",
     "this article is for paying subscribers",
+    "subscribers only",
+    "become a subscriber",
+    "unlock this article",
+    "paywall",
 ]
 
 WEAK_BAD_SCRAPE_INDICATORS = [

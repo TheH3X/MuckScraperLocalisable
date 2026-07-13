@@ -31,10 +31,16 @@
         {% for entry in entries %}
             {% set story = entry.story %}
             {% set edition_story = entry.edition_story %}
-            {% set featured_article = story.articles|selectattr('image_url')|first %}
+            {% set lead = entry.lead_article %}
+            {% set featured_article = lead if lead and lead.image_url else (story.display_articles|selectattr('image_url')|first) %}
             {% set image_url = edition_story.source_image_url or (featured_article.image_url if featured_article else None) %}
             {% set article_count = story.articles|length %}
             {% set outlet_count = story.unique_outlets|length %}
+            {% set lead_outlet = lead.outlet.name if lead and lead.outlet else None %}
+            {% set lead_label = 'Latest' if entry.kind_class == 'developing' else 'Full report' %}
+            {% set story_url = url_for('public.view_story', story_id=story.id) %}
+            {% set primary_url = lead.url if lead and lead.url else story_url %}
+            {% set primary_is_external = lead is not none and lead.url is not none %}
 
             <article class="story-block {{ entry.kind_class }}{% if entry.kind_class == 'top-story' %} story-lead{% endif %}">
                 <div class="story-meta">
@@ -47,7 +53,19 @@
                     {% if edition_story.has_updates %}<span class="updates-flag">New Updates</span>{% endif %}
                 </div>
 
-                <h2><a href="{{ url_for('public.view_story', story_id=story.id) }}">{{ story.display_headline }}</a></h2>
+                <h2>
+                    {% if primary_is_external %}
+                    <a href="{{ primary_url }}" target="_blank" rel="noopener noreferrer">{{ story.display_headline }}</a>
+                    {% else %}
+                    <a href="{{ story_url }}">{{ story.display_headline }}</a>
+                    {% endif %}
+                </h2>
+
+                {% if lead_outlet %}
+                <div class="story-meta" style="margin-top: -0.35rem; margin-bottom: 0.5rem;">
+                    {{ lead_label }}: {{ lead_outlet }}
+                </div>
+                {% endif %}
 
                 {% if image_url and entry.kind_class in ['top-story', 'developing'] %}
                 <div class="image-box">
@@ -55,6 +73,8 @@
                 </div>
                 {% if featured_article and featured_article.outlet %}
                     <div class="photo-credit">Photo: {{ featured_article.outlet.name }}</div>
+                {% elif edition_story.image_credit_text %}
+                    <div class="photo-credit">Photo: {{ edition_story.image_credit_text }}</div>
                 {% endif %}
                 {% endif %}
 
@@ -62,7 +82,11 @@
                     <p class="story-summary">{{ (story.summary or story.title)|truncate(160) }}</p>
                     <p class="brief-line">
                         {{ article_count }} source article{{ 's' if article_count != 1 else '' }} from {{ outlet_count }} outlet{{ 's' if outlet_count != 1 else '' }}.
-                        <a class="view-coverage-link" href="{{ url_for('public.view_story', story_id=story.id) }}">View Full Coverage</a>
+                        {% if primary_is_external %}
+                        <a class="view-coverage-link" href="{{ primary_url }}" target="_blank" rel="noopener noreferrer">Read on {{ lead_outlet or 'source' }}</a>
+                        ·
+                        {% endif %}
+                        <a class="view-coverage-link" href="{{ story_url }}">Sources &amp; analysis</a>
                     </p>
                 {% else %}
                     {% if story.summary %}
@@ -77,7 +101,14 @@
                         {% endfor %}
                     </div>
 
-                    <a class="btn-action" href="{{ url_for('public.view_story', story_id=story.id) }}">Read Full Coverage</a>
+                    {% if primary_is_external %}
+                    <a class="btn-action" href="{{ primary_url }}" target="_blank" rel="noopener noreferrer">Read on {{ lead_outlet or 'source' }}</a>
+                    {% if story.deep_report or article_count >= 3 %}
+                    <a class="btn-action" href="{{ story_url }}" style="margin-left: 0.5rem; opacity: 0.85;">Sources &amp; analysis</a>
+                    {% endif %}
+                    {% else %}
+                    <a class="btn-action" href="{{ story_url }}">Sources &amp; analysis</a>
+                    {% endif %}
                 {% endif %}
             </article>
         {% endfor %}

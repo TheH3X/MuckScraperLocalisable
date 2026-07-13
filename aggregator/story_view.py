@@ -1,10 +1,15 @@
 from datetime import datetime as dt
 
-from aggregator.article_signals import bias_side_for_score
+from aggregator.article_signals import (
+    accessibility_failure_reason,
+    bias_side_for_score,
+    is_article_accessible,
+    select_lead_article,
+)
 from aggregator.constants import AGGREGATORS
 
 
-def apply_aggregator_filter(story):
+def apply_aggregator_filter(story, edition_story=None):
     originals = []
     aggregators = []
     has_good_original = False
@@ -25,6 +30,28 @@ def apply_aggregator_filter(story):
     story.display_articles = originals if has_good_original else (originals + aggregators)
     if not has_good_original:
         story.display_articles.sort(key=lambda x: x.date or dt.min, reverse=True)
+
+    # Accessible sources first; inaccessible last with frank reason labels.
+    accessible = []
+    inaccessible = []
+    for art in story.display_articles:
+        reason = accessibility_failure_reason(art, for_lead=False)
+        if reason is None:
+            accessible.append(art)
+        else:
+            art.accessibility_reason = reason
+            inaccessible.append(art)
+    # Keep relative date order within each bucket.
+    story.display_articles = accessible + inaccessible
+    for art in accessible:
+        art.accessibility_reason = None
+
+    lead = select_lead_article(story, edition_story=edition_story)
+    story.lead_article = lead
+    if lead is not None:
+        # Surface the lead first among accessible sources.
+        reordered = [lead] + [a for a in story.display_articles if a is not lead]
+        story.display_articles = reordered
 
     # Collect unique outlets for display
     unique_outlets = []
@@ -58,6 +85,9 @@ def apply_aggregator_filter(story):
         "blocked": status_counts["blocked"],
         "readable_pct": round((readable_articles / total_articles) * 100) if total_articles else 0,
         "full_pct": round((status_counts["success"] / total_articles) * 100) if total_articles else 0,
+        "accessible_count": sum(
+            1 for a in story.display_articles if is_article_accessible(a, for_lead=False)
+        ),
     }
 
 
