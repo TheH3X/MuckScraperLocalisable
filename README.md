@@ -2,13 +2,13 @@
 
 ### A self-hosted news aggregator with multi-source grouping and local LLM analysis
 
-> **TL;DR:** MuckScraper pulls news from multiple sources, groups related articles into stories, scores outlet bias, and generates local AI summaries and deeper reports on your own hardware.
+> **TL;DR:** MuckScraper pulls news from multiple sources, groups related articles into stories, lets each household user curate sources (allow / prefer / mute), and generates local AI summaries and deeper reports on your own hardware.
 
 ---
 
 ## Live Deployment
 
-**[MuckScraper.news](https://muckscraper.news)** runs on this codebase. It publishes two balanced headline editions per day and is a working example of what MuckScraper produces: story grouping across outlets, bias labeling, AI-generated summaries, and ranked coverage from across the political spectrum.
+**[MuckScraper.news](https://muckscraper.news)** runs on this codebase. It publishes headline editions per day and is a working example of what MuckScraper produces: story grouping across outlets, per-user source curation, AI-generated summaries, and ranked multi-outlet coverage.
 
 ---
 
@@ -24,9 +24,9 @@
 ![Story Reader](screenshots/story_reader1.png)
 ![Story Reader](screenshots/story_reader2.png)
 
-### Bias Tags
-![Bias Tags](screenshots/bias_tags1.png)
-![Bias Tags](screenshots/bias_tags2.png)
+### Source tags
+![Source Tags](screenshots/bias_tags1.png)
+![Source Tags](screenshots/bias_tags2.png)
 
 ### Article Reader
 ![Article Reader](screenshots/article_reader1.png)
@@ -39,16 +39,16 @@
 Most aggregators are just article lists. MuckScraper is story-first.
 
 - **Cross-outlet story grouping**: related coverage from multiple publishers is clustered into a single story so you can compare framing side by side.
-- **Bias visibility**: outlets are labeled on a left-to-right scale using AllSides where available and local model scoring otherwise.
-- **Local AI analysis**: summaries, deep reports, topic classification, and outlet scoring run against your own Ollama-compatible models.
-- **Edition workflow**: the system can publish fixed-size headline editions from the broader story pool instead of leaving everything as a raw reverse-chronological feed.
+- **Per-user source curation**: household users Allow, Prefer, or Mute outlets — including newly discovered NewsAPI/GNews sources marked Unrated until decided. Preferences apply at read time with no admin review.
+- **Local AI analysis**: summaries, deep reports, and topic classification run against your own Ollama-compatible models.
+- **Edition workflow**: the system publishes fixed-size headline editions preferring multi-outlet coverage instead of leaving everything as a raw reverse-chronological feed.
 - **Self-hosted**: no subscription requirement, no ad-tech, and no mandatory third-party cloud inference.
 
 ---
 
 ## What It Does
 
-MuckScraper fetches articles from multiple news APIs and RSS feeds on a schedule, scrapes article text, groups related coverage into stories, classifies topics, scores outlet bias, and generates summaries or deeper reports when content is ready. It includes admin tooling for scrape review, retries, regrouping, and monitoring scrape health over time.
+MuckScraper fetches articles from multiple news APIs and RSS feeds on a schedule, scrapes article text, groups related coverage into stories, classifies topics, and generates summaries or deeper reports when content is ready. Logged-in household users curate which outlets appear in their view. It includes admin tooling for scrape review, retries, regrouping, user creation, and monitoring scrape health over time.
 
 ---
 
@@ -74,13 +74,16 @@ muckscraper/
 │   ├── app.py                      # Main Flask entry point
 │   ├── models.py                   # SQLAlchemy models
 │   ├── filters.py                  # Jinja filters and display helpers
-│   ├── constants.py                # Shared constants (topics, bias buckets, etc.)
-│   ├── article_signals.py          # Article engagement and signal tracking
+│   ├── constants.py                # Shared constants
+│   ├── article_signals.py          # Article accessibility and lead selection
 │   ├── search.py                   # Meilisearch integration
 │   ├── story_view.py               # Story view helpers
+│   ├── outlet_prefs.py             # Per-user Allow / Prefer / Mute helpers
+│   ├── authz.py                    # Admin authorization decorator
 │   ├── blueprints/
 │   │   ├── admin.py                # Admin and maintenance routes
 │   │   ├── auth.py                 # Login/logout routes
+│   │   ├── prefs.py                # User source preference routes
 │   │   └── public.py               # Public reader routes
 │   ├── static/                     # Shared static assets
 │   └── templates/                  # Jinja templates
@@ -95,8 +98,6 @@ muckscraper/
 │   ├── summarizer.py               # Story and article summaries
 │   ├── topic_classifier.py         # Topic classification helpers
 │   ├── headline_generator.py       # AI headline generation for grouped stories
-│   ├── outlet_bias_lookup.py       # Bias data lookup
-│   ├── outlet_bias_llm.py          # LLM-based outlet bias scoring
 │   ├── backfill_images.py          # Utility: backfill missing story images
 │   ├── cleanup_duplicates.py       # Utility: deduplicate articles and stories
 │   └── merge_outlets.py            # Utility: merge duplicate outlet records
@@ -187,13 +188,14 @@ MuckScraper can be extended with personal workflow hooks, such as n8n webhooks f
 - Per-article summaries
 - Stable-story skipping so unchanged stories do not keep reprocessing
 
-### Bias and metadata
-- Outlet bias labels with AllSides or model-based sourcing
+### Source curation and metadata
+- Per-user Allow / Prefer / Mute preferences (Unrated queue for new API-discovered outlets)
 - Topic classification
 - Image capture from upstream feeds
 - Archived edition-story image support for stable published output
 
 ### Admin tools
+- Household user creation (`/admin/users`)
 - Manual scrape and rescrape actions
 - Bulk scrape-missing workflow
 - Scrape audits
@@ -218,8 +220,6 @@ Most model-facing logic lives in:
 - `news_fetcher/topic_classifier.py`
 - `news_fetcher/story_grouper.py`
 - `news_fetcher/headline_generator.py`
-- `news_fetcher/outlet_bias_llm.py`
-- `news_fetcher/outlet_bias_lookup.py` (bias data source)
 
 ### Scrape and grouping tuning
 
@@ -241,4 +241,3 @@ Important knobs include:
 
 - **[Meilisearch](https://www.meilisearch.com/)** — powers full-text search across articles and stories. Fast, easy to self-host, and a genuinely great fit for this kind of project.
 - **[Langfuse](https://langfuse.com/)** — LLM observability and tracing, invaluable for debugging prompts and iterating on model behavior during development.
-- **[AllSides](https://www.allsides.com/)** — outlet bias ratings that inform MuckScraper's bias labeling. Their commitment to balanced news exposure is very much in the spirit of this project.

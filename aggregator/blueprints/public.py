@@ -5,7 +5,9 @@ from datetime import datetime, timedelta, date as date_cls
 from flask import Blueprint, render_template, request, redirect, url_for, jsonify, abort
 from aggregator.search import healthcheck as meili_healthcheck
 from aggregator.models import Article, Story, Topic, RawArticlePayload, Edition, EditionStory
-from aggregator.story_view import apply_aggregator_filter, compute_bias_breakdown
+from aggregator.story_view import apply_aggregator_filter
+from aggregator.outlet_prefs import count_unrated_in_outlets
+from flask_login import current_user
 
 logger = logging.getLogger(__name__)
 
@@ -118,24 +120,31 @@ def view_edition(edition_date, edition_type):
 
     edition_stories = edition.edition_stories.order_by(EditionStory.rank).all()
     entries = []
+    all_outlets = []
     for rank, edition_story in enumerate(edition_stories, start=1):
         story = edition_story.story
         if not story:
             continue
         apply_aggregator_filter(story, edition_story=edition_story)
+        if getattr(story, "hidden_by_prefs", False):
+            continue
         # Prefer the lead snapped at publish time so cards stay stable.
         lead = edition_story.lead_article
-        if lead is None:
-            lead = getattr(story, "lead_article", None)
+        if lead is not None and lead.outlet_id:
+            from aggregator.outlet_prefs import current_prefs_map
+            if current_prefs_map().get(lead.outlet_id) == "mute":
+                lead = getattr(story, "lead_article", None)
+            else:
+                story.lead_article = lead
         else:
-            story.lead_article = lead
+            lead = getattr(story, "lead_article", None)
         kind_class, kind_label = _story_kind(rank, story, edition_story)
+        all_outlets.extend(story.unique_outlets)
         entries.append({
             "rank": rank,
             "edition_story": edition_story,
             "story": story,
             "lead_article": lead,
-            "bias": compute_bias_breakdown(story),
             "kind_class": kind_class,
             "kind_label": kind_label,
         })
@@ -161,7 +170,7 @@ def view_edition(edition_date, edition_type):
     outlet_ids = set()
     total_articles = 0
     for item in entries:
-        total_articles += len(item["story"].articles)
+        total_articles += len(item["story"].display_articles)
         outlet_ids.update(o.id for o in item["story"].unique_outlets)
 
     edition_stats = {
@@ -171,6 +180,7 @@ def view_edition(edition_date, edition_type):
     }
 
     ollama_online = check_ollama_status()
+    unrated_count = count_unrated_in_outlets(all_outlets) if current_user.is_authenticated else 0
 
     return render_template(
         "edition.html",
@@ -184,6 +194,7 @@ def view_edition(edition_date, edition_type):
         prev_edition=prev_edition,
         next_edition=next_edition,
         ollama_online=ollama_online,
+        unrated_count=unrated_count,
     )
 
 

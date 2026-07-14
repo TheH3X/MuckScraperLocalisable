@@ -36,17 +36,14 @@ def register_filters(app):
                     break
             if not start_marker:
                 return None
-            from aggregator.country_config import get_config
-            _cfg = get_config()
-            dynamic_bias_sections = [f"How {_cfg['bias_labels'][i]} is covering it:" for i in range(1, 6)]
-            
-            next_sections = dynamic_bias_sections + [
+
+            next_sections = [
                 "How the left is covering it:", "Why it matters:",
                 "What's the game or company:", "Key performances:",
                 "Market impact:", "What experts are saying:",
                 "Key details:", "Different perspectives:",
                 "What the research shows:", "What the coverage is saying:",
-                "The bigger picture:"
+                "The bigger picture:", "What's missing:", "What's next:",
             ]
             content = report.split(start_marker)[1]
             end_pos = len(content)
@@ -76,17 +73,6 @@ def register_filters(app):
             pass
         return summary.strip()
 
-    @app.template_filter("bias_short_label")
-    def bias_short_label(score):
-        """Compact bias label for magazine-style outlet tags (e.g. 'Center-Left')."""
-        if score is None:
-            return ""
-        bucket = int(round(score))
-        if bucket < 1: bucket = 1
-        if bucket > 5: bucket = 5
-        labels = {1: "Left", 2: "Center-Left", 3: "Center", 4: "Center-Right", 5: "Right"}
-        return labels[bucket]
-
     @app.template_filter("topic_color")
     def topic_color(name):
         """Pick a stable vivid color for a topic chip based on its name."""
@@ -104,26 +90,7 @@ def register_filters(app):
             return palette[0]
         return palette[sum(ord(ch) for ch in name) % len(palette)]
 
-    # Template globals (not context_processor) so imported macros can use them.
     @app.template_global()
-    def bias_label(score):
-        from aggregator.country_config import get_config
-        if score is None:
-            return ""
-        bucket = int(round(score))
-        if bucket < 1:
-            bucket = 1
-        if bucket > 5:
-            bucket = 5
-        return get_config()["bias_labels"][bucket]
-
-    @app.template_global()
-    def bias_color_class(score):
-        if score is None:
-            return ""
-        bucket = int(round(score))
-        if bucket <= 2:
-            return "bias-left"
-        if bucket == 3:
-            return "bias-center"
-        return "bias-right"
+    def outlet_status(outlet):
+        from aggregator.outlet_prefs import status_for_outlet
+        return status_for_outlet(outlet)

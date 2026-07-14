@@ -138,6 +138,9 @@ class OpenSourceBoundaryTests(unittest.TestCase):
         self.assertIn("public.index", endpoints)
         self.assertIn("admin.list_articles", endpoints)
         self.assertIn("auth.login", endpoints)
+        self.assertIn("prefs.settings_sources", endpoints)
+        self.assertIn("prefs.set_outlet_pref", endpoints)
+        self.assertIn("admin.manage_users", endpoints)
         self.assertFalse(any(endpoint.startswith("personal.") for endpoint in endpoints))
 
 

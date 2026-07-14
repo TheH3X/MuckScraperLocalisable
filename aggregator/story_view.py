@@ -2,19 +2,34 @@ from datetime import datetime as dt
 
 from aggregator.article_signals import (
     accessibility_failure_reason,
-    bias_side_for_score,
     is_article_accessible,
     select_lead_article,
 )
 from aggregator.constants import AGGREGATORS
+from aggregator.outlet_prefs import (
+    current_prefs_map,
+    filter_articles_by_prefs,
+    sort_articles_by_prefs,
+)
 
 
-def apply_aggregator_filter(story, edition_story=None):
+def apply_aggregator_filter(story, edition_story=None, outlet_prefs=None):
+    if outlet_prefs is None:
+        try:
+            outlet_prefs = current_prefs_map()
+        except RuntimeError:
+            # Outside a request context (scheduler / publish snapshot).
+            outlet_prefs = {}
+
     originals = []
     aggregators = []
     has_good_original = False
+    sorted_articles = sorted(
+        filter_articles_by_prefs(story.articles, outlet_prefs),
+        key=lambda x: x.date or dt.min,
+        reverse=True,
+    )
     seen_articles = set()
-    sorted_articles = sorted(story.articles, key=lambda x: x.date or dt.min, reverse=True)
     for art in sorted_articles:
         key = (art.title, art.outlet_id)
         if key in seen_articles:
@@ -41,15 +56,27 @@ def apply_aggregator_filter(story, edition_story=None):
         else:
             art.accessibility_reason = reason
             inaccessible.append(art)
-    # Keep relative date order within each bucket.
-    story.display_articles = accessible + inaccessible
+    # Keep relative date order within each bucket, then boost preferred outlets.
+    story.display_articles = (
+        sort_articles_by_prefs(accessible, outlet_prefs)
+        + sort_articles_by_prefs(inaccessible, outlet_prefs)
+    )
     for art in accessible:
         art.accessibility_reason = None
 
     lead = select_lead_article(story, edition_story=edition_story)
+    # If lead came from a muted outlet (edition snapshot), fall back to first display article.
+    if lead is not None and lead.outlet_id and outlet_prefs.get(lead.outlet_id) == "mute":
+        lead = story.display_articles[0] if story.display_articles else None
+    elif lead is None and story.display_articles:
+        # Prefer a preferred outlet as lead when present among accessible articles.
+        for art in story.display_articles:
+            if art.outlet_id and outlet_prefs.get(art.outlet_id) == "prefer":
+                if accessibility_failure_reason(art, for_lead=True) is None:
+                    lead = art
+                    break
     story.lead_article = lead
     if lead is not None:
-        # Surface the lead first among accessible sources.
         reordered = [lead] + [a for a in story.display_articles if a is not lead]
         story.display_articles = reordered
 
@@ -61,6 +88,7 @@ def apply_aggregator_filter(story, edition_story=None):
             unique_outlets.append(art.outlet)
             seen_outlet_ids.add(art.outlet_id)
     story.unique_outlets = unique_outlets
+    story.hidden_by_prefs = len(story.articles) > 0 and len(story.display_articles) == 0
 
     status_counts = {
         "success": 0,
@@ -88,26 +116,4 @@ def apply_aggregator_filter(story, edition_story=None):
         "accessible_count": sum(
             1 for a in story.display_articles if is_article_accessible(a, for_lead=False)
         ),
-    }
-
-
-def compute_bias_breakdown(story):
-    """
-    Count a story's articles by editorial side (leftish/center/rightish/unrated),
-    falling back to outlet bias when an article has no bias score of its own.
-    Returns a dict with counts and percentages for rendering a balance bar.
-    """
-    counts = {"leftish": 0, "center": 0, "rightish": 0, "unrated": 0}
-    for article in story.articles:
-        score = article.bias_score
-        if score is None and article.outlet:
-            score = article.outlet.bias_score
-        side = bias_side_for_score(score)
-        counts[side] = counts.get(side, 0) + 1
-
-    total = len(story.articles) or 1
-    return {
-        "counts": counts,
-        "percents": {side: round((count / total) * 100) for side, count in counts.items()},
-        "has_mixed_coverage": bool(counts["leftish"]) and bool(counts["rightish"]),
     }

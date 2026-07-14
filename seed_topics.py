@@ -50,25 +50,22 @@ PROMPT_PRESETS = {
             "Articles:\n{combined}\n\nExecutive Summary:"
         ),
         "deep_report_prompt": (
-            "You are an experienced media analyst writing a detailed report on how different "
-            "news outlets are covering the same political story.\n\n"
-            "Below are articles from the current source set, grouped by available outlet bias.\n\n"
-            "Source availability:\n{source_availability}\n\n"
+            "You are an experienced journalist writing a detailed report on a news story.\n\n"
+            "Below are articles from the current source set covering the same story:\n\n"
             "{combined}\n\n"
             "Write a detailed analytical report using this EXACT format:\n\n"
             "The story: [Write 2-3 sentences explaining what happened factually]\n\n"
-            "{prompt_structure}\n\n"
-            "What's contested: [Describe where the different sides disagree most sharply, "
-            "what facts or framings are in dispute]\n\n"
-            "What's missing: [Identify what angles or perspectives seem absent from the coverage, "
-            "what questions aren't being asked]\n\n"
+            "Why it matters: [Explain significance — who it affects and how]\n\n"
+            "Key details: [List the most important facts, figures, or developments]\n\n"
+            "Different perspectives: [Describe how outlets frame the story, or what angle "
+            "is emphasized if coverage is uniform]\n\n"
+            "What's missing: [Identify what angles or questions seem absent from the coverage]\n\n"
             "What's next: [Write one sentence on what to watch for]\n\n"
             "Rules:\n"
             "- Use EXACTLY the labels shown above including the colon\n"
             "- The brackets [ ] are instructions for you. Do not include the brackets or the "
             "instruction text in your final response. Replace them with your actual analysis.\n"
-            "- Be specific about framing differences, not just topic differences\n"
-            "- Do not infer, invent, or speculate about how a missing source bucket would cover the story\n"
+            "- Compare only the outlets and perspectives actually present in the article list\n"
             "- Stay neutral and analytical in your own voice\n"
             "- No markdown, no extra formatting\n"
             "- Do not add any text before or after the structure above"
@@ -397,8 +394,6 @@ def run():
     with app.app_context():
         print("=== seed_topics.py ===")
         cfg = get_config()
-        bias_modes = cfg.get("bias_modes", {})
-        default_bias = cfg.get("default_bias_mode", "none")
 
         display_topics = get_topics()
         scheduled_fetches = get_scheduled_fetches()
@@ -452,7 +447,6 @@ def run():
                     existing.fetch_query = fetch.get("query")
                     existing.gnews_query = fetch.get("gnews_query")
                     existing.gnews_category = fetch.get("gnews_category")
-                existing.bias_mode = bias_modes.get(canonical_name, default_bias)
                 hint = CLASSIFIER_HINTS.get(canonical_name)
                 if hint and not existing.classifier_hint:
                     existing.classifier_hint = hint
@@ -478,7 +472,6 @@ def run():
                     fetch_query=fetch.get("query") if fetch else None,
                     gnews_query=fetch.get("gnews_query") if fetch else None,
                     gnews_category=fetch.get("gnews_category") if fetch else None,
-                    bias_mode=bias_modes.get(canonical_name, default_bias),
                     classifier_hint=CLASSIFIER_HINTS.get(canonical_name),
                     analysis_persona=preset["analysis_persona"],
                     summary_prompt=preset["summary_prompt"],
@@ -520,8 +513,6 @@ def run():
                 canonical.fetch_query = fetch.get("query")
                 canonical.gnews_query = fetch.get("gnews_query")
                 canonical.gnews_category = fetch.get("gnews_category")
-                
-            canonical.bias_mode = bias_modes.get(canonical.name, default_bias)
 
             stale = Topic.query.filter_by(name=fetch_label).first()
             if not stale:

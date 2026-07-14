@@ -22,9 +22,11 @@
         <div class="title">Menu</div>
     </div>
 
-    <div class="archive-section-label">Tag Key</div>
-    <div class="tag-key-item"><span class="source-badge">AS</span> Curated Bias Rating</div>
-    <div class="tag-key-item"><span class="source-badge">AI</span> AI-Generated Rating</div>
+    <div class="archive-section-label">Source tags</div>
+    <div class="tag-key-item"><span class="pref-badge pref-unrated">Unrated</span> New / undecided for you</div>
+    <div class="tag-key-item"><span class="pref-badge pref-allow">Allowed</span> Trusted in your feed</div>
+    <div class="tag-key-item"><span class="pref-badge pref-prefer">Preferred</span> Boosted as lead</div>
+    <div class="tag-key-item"><span class="pref-badge pref-mute">Muted</span> Hidden from your view</div>
 
     <div class="archive-section-label">Recent Editions</div>
     {% for day, eds in recent_editions|groupby('date') %}
@@ -39,7 +41,15 @@
 
     <div class="archive-section-label" style="margin-top: 24px;">Navigation</div>
     <a class="archive-link" href="{{ url_for('public.edition_archive') }}">Full Archive</a>
-    <a class="archive-link" href="{{ url_for('admin.list_articles') }}">Admin Feed</a>
+    {% if current_user.is_authenticated %}
+        <a class="archive-link" href="{{ url_for('prefs.settings_sources') }}">Your Sources</a>
+        {% if current_user.is_admin %}
+            <a class="archive-link" href="{{ url_for('admin.list_articles') }}">Admin Feed</a>
+        {% endif %}
+        <a class="archive-link" href="{{ url_for('auth.logout') }}">Sign out</a>
+    {% else %}
+        <a class="archive-link" href="{{ url_for('auth.login') }}">Sign in</a>
+    {% endif %}
 </div>
 {% endmacro %}
 
@@ -54,8 +64,18 @@
         {% if show_story_link %}
             <a class="nav-btn" href="{{ url_for('public.latest_edition') }}">Story</a>
         {% endif %}
+        {% if current_user.is_authenticated %}
+            <a class="nav-btn" href="{{ url_for('prefs.settings_sources') }}">Sources</a>
+        {% endif %}
     </div>
-    <button class="theme-toggle" id="theme-toggle" type="button" onclick="toggleTheme()">Dark Mode</button>
+    <div class="top-nav-right">
+        {% if current_user.is_authenticated %}
+            <span class="nav-user">{{ current_user.username }}</span>
+        {% else %}
+            <a class="nav-btn" href="{{ url_for('auth.login', next=request.path) }}">Sign in</a>
+        {% endif %}
+        <button class="theme-toggle" id="theme-toggle" type="button" onclick="toggleTheme()">Dark Mode</button>
+    </div>
 </div>
 {% endmacro %}
 
@@ -63,9 +83,15 @@
 {% macro masthead(subtitle=None) %}
 <div class="masthead">
     <div class="masthead-links">
-        <a href="{{ url_for('admin.list_articles') }}">About This Paper</a>
-        <span>/</span>
-        <a href="{{ url_for('public.edition_archive') }}">Sources</a>
+        {% if current_user.is_authenticated %}
+            <a href="{{ url_for('prefs.settings_sources') }}">Your Sources</a>
+            <span>/</span>
+        {% endif %}
+        <a href="{{ url_for('public.edition_archive') }}">Archive</a>
+        {% if current_user.is_authenticated and current_user.is_admin %}
+            <span>/</span>
+            <a href="{{ url_for('admin.list_articles') }}">Admin</a>
+        {% endif %}
     </div>
     <a class="wordmark" href="{{ url_for('public.latest_edition') }}">MuckScraper News</a>
     {% if subtitle %}
@@ -77,17 +103,56 @@
 {% endmacro %}
 
 
-{% macro outlet_bias_tag(outlet) %}
+{% macro outlet_tag(outlet, show_actions=none) %}
 {% if outlet %}
-<span class="bias-tag-group">
+{% set status = outlet_status(outlet) %}
+{% if show_actions is none %}
+    {% set show_actions = current_user.is_authenticated %}
+{% endif %}
+<span class="bias-tag-group outlet-tag-group">
     <span class="outlet-name-box">{{ outlet.name }}</span>
-    {% if outlet.bias_score is not none %}
-        <span class="bias-label-box {{ bias_color_class(outlet.bias_score) }}">{{ outlet.bias_score|bias_short_label }}</span>
-        <span class="source-badge" title="{{ 'Curated rating' if outlet.bias_source == 'static' else 'AI-generated rating' }}">{{ 'AS' if outlet.bias_source == 'static' else 'AI' }}</span>
+    <span class="pref-badge pref-{{ status }}" title="Your rating for this source">{{ status|capitalize }}</span>
+    {% if show_actions %}
+    <span class="outlet-pref-actions">
+        {% if status != 'allow' %}
+        <form method="POST" action="{{ url_for('prefs.set_outlet_pref', outlet_id=outlet.id) }}" class="outlet-pref-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="preference" value="allow">
+            <input type="hidden" name="next" value="{{ request.path }}">
+            <button type="submit" class="outlet-pref-btn" title="Allow this source">Allow</button>
+        </form>
+        {% endif %}
+        {% if status != 'prefer' %}
+        <form method="POST" action="{{ url_for('prefs.set_outlet_pref', outlet_id=outlet.id) }}" class="outlet-pref-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="preference" value="prefer">
+            <input type="hidden" name="next" value="{{ request.path }}">
+            <button type="submit" class="outlet-pref-btn" title="Prefer this source">Prefer</button>
+        </form>
+        {% endif %}
+        {% if status != 'mute' %}
+        <form method="POST" action="{{ url_for('prefs.set_outlet_pref', outlet_id=outlet.id) }}" class="outlet-pref-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="preference" value="mute">
+            <input type="hidden" name="next" value="{{ request.path }}">
+            <button type="submit" class="outlet-pref-btn" title="Mute this source">Mute</button>
+        </form>
+        {% else %}
+        <form method="POST" action="{{ url_for('prefs.set_outlet_pref', outlet_id=outlet.id) }}" class="outlet-pref-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="preference" value="clear">
+            <input type="hidden" name="next" value="{{ request.path }}">
+            <button type="submit" class="outlet-pref-btn" title="Clear preference">Unmute</button>
+        </form>
+        {% endif %}
+    </span>
     {% endif %}
 </span>
 {% endif %}
 {% endmacro %}
+
+{# Back-compat alias used by older templates #}
+{% macro outlet_bias_tag(outlet) %}{{ outlet_tag(outlet) }}{% endmacro %}
 
 
 {% macro theme_script() %}

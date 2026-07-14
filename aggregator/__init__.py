@@ -44,9 +44,11 @@ def create_app():
     from aggregator.blueprints.public import public
     from aggregator.blueprints.admin import admin
     from aggregator.blueprints.auth import auth
+    from aggregator.blueprints.prefs import prefs
     app.register_blueprint(public)
     app.register_blueprint(admin,  url_prefix='/admin')
     app.register_blueprint(auth,   url_prefix='/auth')
+    app.register_blueprint(prefs)
 
     return app
 

@@ -4,8 +4,6 @@
 from aggregator import create_app, db
 from aggregator.article_signals import (
     ROUNDUP_TITLE_PATTERNS,
-    bias_bucket_for_score,
-    bias_side_for_score,
     is_article_accessible,
     is_developing_story,
     is_roundup_article,
@@ -15,8 +13,6 @@ from aggregator.article_signals import (
 )
 from aggregator.models import Article, Outlet, Story, Topic
 
-from news_fetcher.outlet_bias_llm import get_outlet_bias_from_llm
-from news_fetcher.outlet_bias_lookup import get_outlet_bias_score
 from news_fetcher.summarizer import summarize_story, check_ollama_status, generate_deep_report, summarize_article
 from news_fetcher.scraper import scrape_article, session_in_transaction
 from datetime import datetime
@@ -73,8 +69,6 @@ BLOCKED_TITLE_KEYWORDS = [
 
 GROUPING_LOOKBACK_DAYS = int(os.getenv("MUCKSCRAPER_GROUPING_LOOKBACK_DAYS", "7"))
 
-BIAS_BUCKETS = ("1", "2", "3", "4", "5", "unrated")
-
 
 def empty_store_metrics(topic_name, provider=None, input_articles=0):
     return {
@@ -95,12 +89,6 @@ def empty_store_metrics(topic_name, provider=None, input_articles=0):
             "duplicate_title_outlet": 0,
         },
         "scrape_statuses": {},
-        "bias_buckets": {bucket: 0 for bucket in BIAS_BUCKETS},
-        "bias_sources": {
-            "static": 0,
-            "ai": 0,
-            "unrated": 0,
-        },
     }
 
 
@@ -292,61 +280,6 @@ def stories_look_duplicate_for_edition(story_a, story_b):
     return False
 
 
-def _article_bias_side(article):
-    score = article.bias_score
-    if score is None and article.outlet:
-        score = article.outlet.bias_score
-    return bias_side_for_score(score)
-
-
-def _story_balance_bucket(story):
-    counts = {
-        "leftish": 0,
-        "center": 0,
-        "rightish": 0,
-        "unrated": 0,
-    }
-    for article in story.articles:
-        side = _article_bias_side(article)
-        counts[side] = counts.get(side, 0) + 1
-
-    leftish = counts["leftish"]
-    center = counts["center"]
-    rightish = counts["rightish"]
-    rated_total = leftish + center + rightish
-
-    if rated_total == 0:
-        return "unrated"
-
-    # A story with comparable left/right coverage should not be treated as
-    # ideologically dominated just because of dict insertion order.
-    if leftish and rightish and abs(leftish - rightish) <= 1:
-        return "center"
-
-    if center >= leftish and center >= rightish:
-        return "center"
-    if rightish > leftish:
-        return "rightish"
-    return "leftish"
-
-
-def _story_has_left_and_right_coverage(story):
-    has_leftish = False
-    has_rightish = False
-
-    for article in story.articles:
-        side = _article_bias_side(article)
-        if side == "leftish":
-            has_leftish = True
-        elif side == "rightish":
-            has_rightish = True
-
-        if has_leftish and has_rightish:
-            return True
-
-    return False
-
-
 def _story_primary_outlet(story):
     outlet_counts = {}
     for article in story.articles:
@@ -361,78 +294,22 @@ def _story_primary_outlet(story):
     return max(sorted(outlet_counts.items()), key=lambda item: item[1])[0]
 
 
+def _story_unique_outlet_count(story):
+    names = set()
+    for article in story.articles:
+        if not article.outlet or not article.outlet.name:
+            continue
+        key = article.outlet.name.strip().lower()
+        if key:
+            names.add(key)
+    return len(names)
+
+
 def _first_story_article(story):
     for article in story.articles:
         if article is not None:
             return article
     return None
-
-
-def retry_unrated_outlets(ollama_budget=30):
-    """Find outlets with no bias score and retry.
-    Checks curated lookup table first, then falls back to Ollama.
-    Outlets that have failed Ollama 15 or more times are permanently skipped.
-    """
-    unrated = Outlet.query.filter(
-        Outlet.bias_score == None,
-        Outlet.bias_retry_count < 15
-    ).all()
-
-    if not unrated:
-        logger.info("No unrated outlets to retry.")
-        return
-
-    skipped = Outlet.query.filter(
-        Outlet.bias_score == None,
-        Outlet.bias_retry_count >= 15
-    ).count()
-
-    if skipped:
-        logger.info(f"Permanently skipping {skipped} outlets that have failed 15+ times.")
-
-    logger.info(f"Found {len(unrated)} unrated outlets, checking curated then Ollama...")
-
-    ollama_calls = 0
-    for outlet in unrated:
-        # Check curated lookup table first
-        as_score = get_outlet_bias_score(outlet.name)
-        if as_score is not None:
-            logger.info(f"  Curated score {as_score} for {outlet.name}")
-            outlet.bias_score = as_score
-            outlet.static_bias_score = as_score
-            outlet.bias_source = "static"
-            outlet.bias_retry_count = 0
-            for article in outlet.articles:
-                article.bias_score = as_score
-            continue
-
-        if ollama_calls >= ollama_budget:
-            logger.info(
-                "  Ollama bias budget (%s) reached; deferring remaining unrated outlets.",
-                ollama_budget,
-            )
-            break
-
-        logger.info(f"  No curated rating for {outlet.name}, trying Ollama...")
-        bias_score = get_outlet_bias_from_llm(outlet.name)
-        ollama_calls += 1
-
-        if bias_score is not None:
-            logger.info(f"  Ollama score {bias_score} for {outlet.name}")
-            outlet.bias_score = bias_score
-            outlet.bias_source = "ai"
-            outlet.bias_retry_count = 0
-            for article in outlet.articles:
-                article.bias_score = bias_score
-        else:
-            outlet.bias_retry_count = (outlet.bias_retry_count or 0) + 1
-            logger.warning(
-                f"  Still couldn't rate {outlet.name} "
-                f"(attempt {outlet.bias_retry_count}/15)."
-            )
-
-    db.session.commit()
-    logger.info("Finished retrying unrated outlets.")
 
 
 def get_or_create_topic(topic_name):
@@ -784,12 +661,6 @@ def merge_duplicate_outlets():
                 )
                 continue
 
-            # Copy bias data if canonical is missing it
-            if canonical.bias_score is None and dup.bias_score is not None:
-                canonical.bias_score = dup.bias_score
-                canonical.static_bias_score = getattr(dup, 'static_bias_score', None)
-                canonical.bias_source = getattr(dup, 'bias_source', None)
-
             db.session.delete(dup)
             merged += article_count
             deleted += 1
@@ -896,24 +767,13 @@ def store_articles(articles_data, topic_name, provider=None, progress_cb=None):
                 image_url = None
 
             if not outlet:
-                as_score = get_outlet_bias_score(source_name)
-                if as_score is not None:
-                    logger.info(f"  New outlet {source_name}: Curated rating {as_score}")
-                    bias_score = as_score
-                    bias_source = "static"
-                    static_bias_score = as_score
-                else:
-                    logger.info(f"  New outlet {source_name}: no Curated rating, will be rated in batch pass...")
-                    bias_score = None
-                    bias_source = None
-                    static_bias_score = None
+                logger.info(f"  New outlet {source_name} (provider={provider or 'unknown'})")
                 outlet = Outlet(
                     name=source_name,
                     url=url,
                     description="N/A",
-                    bias_score=bias_score,
-                    static_bias_score=static_bias_score,
-                    bias_source=bias_source
+                    first_seen_at=datetime.utcnow(),
+                    discovery_source=provider,
                 )
                 db.session.add(outlet)
                 db.session.flush()
@@ -971,18 +831,6 @@ def store_articles(articles_data, topic_name, provider=None, progress_cb=None):
             if isinstance(article_embedding, str):
                 article_embedding = json.loads(article_embedding)
 
-            resolved_bias_mode = "none"
-            if story.topics:
-                modes = [t.bias_mode for t in story.topics if t.bias_mode]
-                if "political" in modes:
-                    resolved_bias_mode = "political"
-                elif "editorial" in modes:
-                    resolved_bias_mode = "editorial"
-
-            article_bias_score = outlet.bias_score
-            if resolved_bias_mode == "none":
-                article_bias_score = None
-
             new_article = Article(
                 title=title,
                 content=final_content,
@@ -992,7 +840,6 @@ def store_articles(articles_data, topic_name, provider=None, progress_cb=None):
                 url=url,
                 date=published_at,
                 fetched_at=datetime.utcnow(),
-                bias_score=article_bias_score,
                 image_url=image_url,
                 embedding=article_embedding,
                 scrape_status=scrape_result.status,
@@ -1029,10 +876,6 @@ def store_articles(articles_data, topic_name, provider=None, progress_cb=None):
             metrics["scrape_statuses"][scrape_result.status] = (
                 metrics["scrape_statuses"].get(scrape_result.status, 0) + 1
             )
-            bias_bucket = bias_bucket_for_score(outlet.bias_score)
-            metrics["bias_buckets"][bias_bucket] += 1
-            bias_source = outlet.bias_source or "unrated"
-            metrics["bias_sources"][bias_source] = metrics["bias_sources"].get(bias_source, 0) + 1
     finally:
         clear_classification_batch()
 
@@ -1797,7 +1640,6 @@ def ollama_catchup():
     generate_missing_headlines()
     generate_missing_deep_reports()
     regroup_ungrouped_stories()
-    retry_unrated_outlets(ollama_budget=20)
     logger.info("=== Ollama catchup complete ===")
 
 
@@ -2017,58 +1859,6 @@ def process_current_edition():
     return metrics
 
 
-def sync_static_ratings():
-    """
-    Periodic pass to pull static curated bias ratings from configuration (via get_outlet_bias_score)
-    and update the DB. This allows users to add a rating to country_config.py
-    and have it automatically retroactively applied to existing outlets without
-    a full migration script.
-    """
-    from aggregator import db
-    from aggregator.models import Outlet, Article
-    from news_fetcher.outlet_bias_lookup import get_outlet_bias_score
-    import logging
-
-    logger = logging.getLogger(__name__)
-    logger.info("=== Curated rating sync starting ===")
-    
-    outlets = Outlet.query.all()
-    updated = 0
-    skipped = 0
-
-    for outlet in outlets:
-        as_score = get_outlet_bias_score(outlet.name)
-        if as_score is None:
-            skipped += 1
-            continue
-            
-        score_changed = outlet.static_bias_score != as_score
-        not_yet_static = outlet.bias_source != "static"
-        
-        if score_changed or not_yet_static:
-            old_score = outlet.bias_score
-            outlet.bias_score = as_score
-            outlet.static_bias_score = as_score
-            outlet.bias_source = "static"
-            outlet.bias_retry_count = 0
-            
-            # Retroactively update articles for this outlet.
-            # Only update articles that already have a bias_score — a None score
-            # means the article belongs to a non-political topic (e.g. tech, sports)
-            # and bias was intentionally suppressed. Don't re-introduce it.
-            for article in outlet.articles:
-                if article.bias_score is not None:
-                    article.bias_score = as_score
-                    
-            db.session.commit()
-            updated += 1
-            logger.info(f"Updated outlet {outlet.name} to curated score {as_score} "
-                f"({'upgraded from AI' if not_yet_static else 'score updated'})")
-
-    logger.info(f"=== Sync complete: {updated} updated, {skipped} skipped ===")
-    return {"status": "ok", "updated": updated, "skipped": skipped}
-
-
 def publish_edition():
     """
     Create an Edition record for the current fetch cycle.
@@ -2192,148 +1982,72 @@ def publish_edition():
         if story.id not in seen:
             seen.add(story.id)
             deduped.append((story, has_updates))
+
     top_20 = []
+    selected_ids = set()
     dedupe_skip_count = 0
     constrained_skip_counts = {
-        "bias_cap": 0,
         "outlet_cap": 0,
     }
-    balance_bucket_counts = {
-        "leftish": 0,
-        "center": 0,
-        "rightish": 0,
-        "unrated": 0,
-    }
-    mixed_coverage_count = 0
     outlet_story_counts = {}
-    max_stories_per_balance_bucket = 8
     max_stories_per_primary_outlet = 4
-    target_mixed_coverage_stories = 8
-    target_minimums = {
-        "leftish": 7,
-        "center": 7,
-        "rightish": 5,
-    }
-    available_by_bucket = {
-        "leftish": 0,
-        "center": 0,
-        "rightish": 0,
-        "unrated": 0,
-    }
-    for story, _ in deduped:
-        available_by_bucket[_story_balance_bucket(story)] += 1
+    outlet_diversity_picks = 0
 
-    def can_add_balanced(story):
-        balance_bucket = _story_balance_bucket(story)
+    def can_add(story):
         primary_outlet = _story_primary_outlet(story)
-
-        if balance_bucket_counts.get(balance_bucket, 0) >= max_stories_per_balance_bucket:
-            constrained_skip_counts["bias_cap"] += 1
-            return False
         if outlet_story_counts.get(primary_outlet, 0) >= max_stories_per_primary_outlet:
             constrained_skip_counts["outlet_cap"] += 1
             return False
         return True
 
     def add_story(story, has_updates):
-        nonlocal mixed_coverage_count
-        balance_bucket = _story_balance_bucket(story)
         primary_outlet = _story_primary_outlet(story)
-        balance_bucket_counts[balance_bucket] = balance_bucket_counts.get(balance_bucket, 0) + 1
         outlet_story_counts[primary_outlet] = outlet_story_counts.get(primary_outlet, 0) + 1
-        if _story_has_left_and_right_coverage(story):
-            mixed_coverage_count += 1
         top_20.append((story, has_updates))
+        selected_ids.add(story.id)
 
-    # First reserve room for high-ranked stories that already have both
-    # leftish and rightish coverage, then fill major balance buckets.
-    selected_ids = set()
-    for story, has_updates in deduped:
+    # Prefer stories with more distinct outlets, then higher headline_score.
+    ranked = sorted(
+        deduped,
+        key=lambda pair: (
+            _story_unique_outlet_count(pair[0]),
+            pair[0].headline_score or 0,
+        ),
+        reverse=True,
+    )
+
+    for story, has_updates in ranked:
         if len(top_20) >= 20:
             break
-        if not _story_has_left_and_right_coverage(story):
-            continue
         if any(stories_look_duplicate_for_edition(story, kept_story) for kept_story, _ in top_20):
             dedupe_skip_count += 1
             continue
-        if not can_add_balanced(story):
+        if not can_add(story):
             continue
         add_story(story, has_updates)
-        selected_ids.add(story.id)
-        if mixed_coverage_count >= target_mixed_coverage_stories:
-            break
+        outlet_diversity_picks += 1
 
-    for bucket in ("rightish", "center", "leftish"):
-        if len(top_20) >= 20:
-            break
-        target = min(target_minimums[bucket], available_by_bucket.get(bucket, 0))
-        if target <= 0:
-            continue
-        for story, has_updates in deduped:
+    # If diversity preference left us short, fill by headline_score among remaining
+    # eligible stories while still respecting outlet cap + same-event dedupe.
+    if len(top_20) < 20:
+        by_score = sorted(
+            [(story, has_updates) for story, has_updates in deduped if story.id not in selected_ids],
+            key=lambda pair: pair[0].headline_score or 0,
+            reverse=True,
+        )
+        for story, has_updates in by_score:
             if len(top_20) >= 20:
                 break
-            if story.id in selected_ids:
-                continue
-            if _story_balance_bucket(story) != bucket:
-                continue
             if any(stories_look_duplicate_for_edition(story, kept_story) for kept_story, _ in top_20):
                 dedupe_skip_count += 1
+                logger.info(
+                    "[Edition] Skipping same-event duplicate candidate: %s",
+                    story.title[:100],
+                )
                 continue
-            if not can_add_balanced(story):
+            if not can_add(story):
                 continue
             add_story(story, has_updates)
-            selected_ids.add(story.id)
-            if balance_bucket_counts.get(bucket, 0) >= target or len(top_20) >= 20:
-                break
-
-    for story, has_updates in deduped:
-        if len(top_20) >= 20:
-            break
-        if story.id in selected_ids:
-            continue
-        if any(stories_look_duplicate_for_edition(story, kept_story) for kept_story, _ in top_20):
-            dedupe_skip_count += 1
-            logger.info(
-                "[Edition] Skipping same-event duplicate candidate: %s",
-                story.title[:100],
-            )
-            continue
-        if not can_add_balanced(story):
-            continue
-        add_story(story, has_updates)
-        if len(top_20) >= 20:
-            break
-
-    # If caps left us short, fill remaining slots from same deduped list
-    # while still preserving same-event dedupe and hard outlet caps. Bias caps
-    # are relaxed only when every remaining candidate would breach them.
-    if len(top_20) < 20:
-        selected_ids = {story.id for story, _ in top_20}
-        for relax_bias_cap in (False, True):
-            for story, has_updates in deduped:
-                if len(top_20) >= 20:
-                    break
-                if story.id in selected_ids:
-                    continue
-                if any(stories_look_duplicate_for_edition(story, kept_story) for kept_story, _ in top_20):
-                    continue
-
-                balance_bucket = _story_balance_bucket(story)
-                primary_outlet = _story_primary_outlet(story)
-                if outlet_story_counts.get(primary_outlet, 0) >= max_stories_per_primary_outlet:
-                    constrained_skip_counts["outlet_cap"] += 1
-                    continue
-                if (
-                    not relax_bias_cap and
-                    balance_bucket_counts.get(balance_bucket, 0) >= max_stories_per_balance_bucket
-                ):
-                    constrained_skip_counts["bias_cap"] += 1
-                    continue
-
-                add_story(story, has_updates)
-                selected_ids.add(story.id)
-            if len(top_20) >= 20:
-                break
 
     if len(top_20) > 20:
         logger.warning(
@@ -2355,7 +2069,7 @@ def publish_edition():
     db.session.add(edition)
     db.session.flush()
 
-    # Selection above balances political/outlet diversity, which can pick a
+    # Selection above prefers outlet diversity, which can pick a
     # lower-scored story before a higher-scored one. Display order should
     # still reflect importance, so sort by headline_score after selection.
     top_20.sort(key=lambda pair: pair[0].headline_score or 0, reverse=True)
@@ -2402,8 +2116,8 @@ def publish_edition():
         f"with {len(top_20)} stories ({carryover_count} unchanged carry-overs, "
         f"{updated_repeat_count} repeated stories with new updates, "
         f"{dedupe_skip_count} same-event candidates skipped, "
-        f"caps_skipped bias={constrained_skip_counts['bias_cap']} outlet={constrained_skip_counts['outlet_cap']}, "
-        f"mixed_coverage={mixed_coverage_count}, balance={balance_bucket_counts})."
+        f"caps_skipped outlet={constrained_skip_counts['outlet_cap']}, "
+        f"outlet_diversity_picks={outlet_diversity_picks})."
     )
     return {
         "status": "published",
@@ -2414,9 +2128,7 @@ def publish_edition():
         "carryover_count": carryover_count,
         "updated_repeat_count": updated_repeat_count,
         "dedupe_skip_count": dedupe_skip_count,
-        "mixed_coverage_count": mixed_coverage_count,
-        "balance_bucket_counts": balance_bucket_counts,
-        "caps_skipped_bias": constrained_skip_counts["bias_cap"],
+        "outlet_diversity_picks": outlet_diversity_picks,
         "caps_skipped_outlet": constrained_skip_counts["outlet_cap"],
     }
 

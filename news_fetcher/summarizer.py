@@ -519,21 +519,6 @@ def generate_deep_report(story):
 
     analysis_type = detect_analysis_type(story)
 
-    # Resolve bias_mode for story
-    bias_mode = "none"
-    try:
-        if story.topics:
-            modes = [t.bias_mode for t in story.topics if t.bias_mode]
-            if "political" in modes:
-                bias_mode = "political"
-            elif "editorial" in modes:
-                bias_mode = "editorial"
-    except Exception:
-        pass
-
-    # Group articles by exact bias category
-    bias_groups = {1: [], 2: [], 3: [], 4: [], 5: [], "unrated": []}
-
     prompt_articles, excluded_articles = _select_story_prompt_articles(story, limit=15)
     readable_articles = [
         article for article in prompt_articles
@@ -554,37 +539,8 @@ def generate_deep_report(story):
         )
         return None
 
-    for article in prompt_articles:
-        score = article.bias_score
-        
-        # Note: we deliberately DO NOT fall back to article.outlet.bias_score here.
-        # If article.bias_score is None, it means bias was intentionally suppressed 
-        # (e.g., non-political topic) or it's unrated. Using the outlet score would
-        # falsely inject bias categorization into non-political reports.
-            
-        if score is None:
-            bias_groups["unrated"].append(article)
-        else:
-            bucket = int(round(score))
-            if bucket < 1: bucket = 1
-            if bucket > 5: bucket = 5
-            bias_groups[bucket].append(article)
-
-    def format_articles(articles, label, include_empty=False):
-        if not articles:
-            return f"\n{label} Sources:\n- None found in the current source set." if include_empty else ""
-        lines = [f"\n{label} Sources:"]
-        for a in articles:
-            outlet_name = a.outlet.name if a.outlet else (a.source or "Unknown source")
-            lines.append(f"- {outlet_name}: {a.title}")
-            if a.content:
-                snippet = strip_html(a.content)[:300].strip()
-                if snippet:
-                    lines.append(f"  Excerpt: {snippet}")
-        return "\n".join(lines)
-
     def format_all_articles(articles):
-        """Format all articles without bias grouping for non-political analysis."""
+        """Format all articles for deep-report prompt input."""
         lines = []
         for a in articles:
             outlet_name = a.outlet.name if a.outlet else (a.source or "Unknown source")
@@ -595,38 +551,12 @@ def generate_deep_report(story):
                     lines.append(f"  Excerpt: {snippet}")
         return "\n".join(lines)
 
-    # Build formatting variables based on analysis type
-    combined = ""
+    combined = format_all_articles(prompt_articles)
+    if not combined.strip():
+        return None
+
     source_availability = ""
     prompt_structure = ""
-    
-    if bias_mode == 'political':
-        availability_lines = []
-        prompt_structure_lines = []
-        
-        for i in range(1, 6):
-            label = _cfg["bias_labels"][i]
-            section = format_articles(bias_groups[i], label.upper(), include_empty=True)
-            combined += section
-            availability_lines.append(f"- {label} sources found: {len(bias_groups[i])}")
-            
-            prompt_structure_lines.append(
-                f"How {label} is covering it: [Only describe coverage if sources are listed. If none, write exactly: \"No {label} sources were found in the current coverage.\"]"
-            )
-            
-        unrated_section = format_articles(bias_groups["unrated"], "UNRATED", include_empty=True)
-        combined += unrated_section
-        availability_lines.append(f"- Unrated sources found: {len(bias_groups['unrated'])}")
-
-        if not combined.strip():
-            return None
-
-        source_availability = "\n".join(availability_lines)
-        prompt_structure = "\n\n".join(prompt_structure_lines)
-    else:
-        combined = format_all_articles(prompt_articles)
-        if not combined.strip():
-            return None
 
     combined = truncate_to_token_budget(combined, DEEP_REPORT_INPUT_TOKEN_BUDGET)
 

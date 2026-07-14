@@ -4,10 +4,10 @@ import threading
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from flask import Blueprint, current_app, render_template, request, redirect, url_for, jsonify, flash
-from flask_login import login_required
 from sqlalchemy import case, func, or_
 from aggregator import db
-from aggregator.models import AppSetting, Article, Outlet, Story, Topic, RawArticlePayload
+from aggregator.authz import admin_required
+from aggregator.models import AppSetting, Article, Outlet, Story, Topic, RawArticlePayload, User
 from aggregator.search import SearchUnavailableError, reindex_all, search_story_ids
 from aggregator.story_view import apply_aggregator_filter
 
@@ -248,41 +248,6 @@ def article_domain(url):
     return domain or None
 
 
-def story_bias_totals(story):
-    """Compute left/center/right article counts for a story.
-
-    Uses article.bias_score exclusively. A None value means the article belongs
-    to a non-political topic and bias was intentionally suppressed — do NOT fall
-    back to outlet.bias_score, as that would re-introduce bias for tech/sports/etc.
-    """
-    counts = {
-        "left": 0,
-        "center": 0,
-        "right": 0,
-    }
-    for article in story.articles:
-        score = article.bias_score
-        if score is None:
-            continue  # Intentionally suppressed — do not fall back to outlet score
-        if score <= 2.5:
-            counts["left"] += 1
-        elif score <= 3.5:
-            counts["center"] += 1
-        else:
-            counts["right"] += 1
-
-    story.left_bias_count = counts["left"]
-    story.center_bias_count = counts["center"]
-    story.right_bias_count = counts["right"]
-    story.bias_gap = abs(counts["left"] - counts["right"])
-    if counts["left"] > counts["right"]:
-        story.enrichment_direction = "right"
-    elif counts["right"] > counts["left"]:
-        story.enrichment_direction = "left"
-    else:
-        story.enrichment_direction = None
-
-
 def redirect_to_articles(label=None, scrape_status=None):
     next_url = request.form.get("next", "").strip()
     if next_url.startswith("/"):
@@ -306,20 +271,20 @@ def apply_scrape_result(article, result):
 
 
 @admin.route("/fetch-page")
-@login_required
+@admin_required
 def fetch_page():
     fetch_topics = _get_fetch_topics()
     return render_template("fetch.html", fetch_presets=fetch_topics)
 
 
 @admin.route("/tools")
-@login_required
+@admin_required
 def tools_page():
     return render_template("admin_tools.html")
 
 
 @admin.route("/run-full-pipeline", methods=["POST"])
-@login_required
+@admin_required
 def run_full_pipeline():
     def _run_full(app):
         with app.app_context():
@@ -339,7 +304,7 @@ def run_full_pipeline():
 
 
 @admin.route("/articles")
-@login_required
+@admin_required
 def list_articles(per_page=25, force_multi=False):
     active_label = request.args.get("topic", None)
     active_scrape_status = request.args.get("scrape_status", "").strip().lower() or None
@@ -423,7 +388,6 @@ def list_articles(per_page=25, force_multi=False):
 
     for story in stories:
         apply_aggregator_filter(story)
-        story_bias_totals(story)
 
     return render_template(
         "articles.html",
@@ -441,13 +405,13 @@ def list_articles(per_page=25, force_multi=False):
 
 
 @admin.route("/multi-stories")
-@login_required
+@admin_required
 def multi_article_stories():
     return list_articles(per_page=50, force_multi=True)
 
 
 @admin.route("/fetch", methods=["POST"])
-@login_required
+@admin_required
 def fetch_articles():
     mode = request.form.get("mode", "top").strip() or "top"
     query = request.form.get("query", "").strip() or None
@@ -479,34 +443,8 @@ def fetch_articles():
     return redirect_to_articles(label, scrape_status)
 
 
-@admin.route("/enrich-story-balance/<int:story_id>", methods=["POST"])
-@login_required
-def enrich_story_balance(story_id):
-    story = Story.query.get_or_404(story_id)
-    label = request.form.get("label", "")
-    scrape_status = request.form.get("scrape_status", "").strip() or None
-    try:
-        from news_fetcher.rss_fetcher import enrich_story_with_opposite_feeds
-        from news_fetcher.fetch_and_store_articles import retry_unrated_outlets
-
-        metrics = enrich_story_with_opposite_feeds(story, max_articles_per_story=3)
-        if metrics.get("stored", 0) > 0:
-            retry_unrated_outlets()
-        logger.info(
-            "[Admin] Story balance enrichment story_id=%s direction=%s stored=%s matched=%s status=%s",
-            story_id,
-            metrics.get("direction"),
-            metrics.get("stored", 0),
-            metrics.get("matched_articles", 0),
-            metrics.get("status"),
-        )
-    except Exception as e:
-        logger.exception(f"Story balance enrichment error for story {story_id}: {e}")
-    return redirect_to_articles(label, scrape_status)
-
-
 @admin.route("/summarize/<int:story_id>", methods=["POST"])
-@login_required
+@admin_required
 def summarize_story_route(story_id):
     story = Story.query.get_or_404(story_id)
     label = request.form.get("label", "")
@@ -524,7 +462,7 @@ def summarize_story_route(story_id):
 
 
 @admin.route("/summarize-article/<int:article_id>", methods=["POST"])
-@login_required
+@admin_required
 def summarize_article_route(article_id):
     article = Article.query.get_or_404(article_id)
     try:
@@ -539,59 +477,22 @@ def summarize_article_route(article_id):
     return redirect(url_for("public.view_article", article_id=article_id))
 
 
-@admin.route("/rerank-outlet/<int:outlet_id>", methods=["POST"])
-@login_required
-def rerank_outlet(outlet_id):
-    from aggregator.models import Outlet
-    outlet = Outlet.query.get_or_404(outlet_id)
-    label = request.form.get("label", "")
-    scrape_status = request.form.get("scrape_status", "").strip() or None
-    try:
-        from news_fetcher.outlet_bias_llm import get_outlet_bias_from_llm
-        bias_score = get_outlet_bias_from_llm(outlet.name)
-        if bias_score is not None:
-            outlet.bias_score = bias_score
-            for article in outlet.articles:
-                # Only update articles that already have a bias_score.
-                # A None score means bias was intentionally suppressed for that
-                # article's topic (e.g. tech, sports) — don't re-introduce it.
-                if article.bias_score is not None:
-                    article.bias_score = bias_score
-            db.session.commit()
-    except Exception as e:
-        logger.error(f"Re-rank error: {e}")
-    return redirect_to_articles(label, scrape_status)
-
-
-@admin.route("/rate-article/<int:article_id>", methods=["POST"])
-@login_required
-def rate_article(article_id):
-    article = Article.query.get_or_404(article_id)
-    label = request.form.get("label", "")
-    scrape_status = request.form.get("scrape_status", "").strip() or None
-    try:
-        from news_fetcher.outlet_bias_llm import get_article_bias_from_llm
-        bias_score = get_article_bias_from_llm(article.title, article.content)
-        if bias_score is not None:
-            article.bias_score = bias_score
-            db.session.commit()
-    except Exception as e:
-        logger.error(f"Article rating error: {e}")
-    return redirect_to_articles(label, scrape_status)
-
-
 @admin.route("/ollama-catchup", methods=["POST"])
-@login_required
+@admin_required
 def ollama_catchup_route():
     label = request.form.get("label", "")
     scrape_status = request.form.get("scrape_status", "").strip() or None
     from news_fetcher.fetch_and_store_articles import ollama_catchup
-    dispatch_background_tool("AI Catch-up", ["Auditing scrapes", "Generating embeddings", "Generating headlines", "Regrouping stories", "Retrying unrated outlets"], ollama_catchup)
+    dispatch_background_tool(
+        "AI Catch-up",
+        ["Auditing scrapes", "Generating embeddings", "Generating headlines", "Regrouping stories"],
+        ollama_catchup,
+    )
     return redirect_to_articles(label, scrape_status)
 
 
 @admin.route("/scrape-article/<int:article_id>", methods=["POST"])
-@login_required
+@admin_required
 def scrape_article_route(article_id):
     article = Article.query.get_or_404(article_id)
     label = request.form.get("label", "")
@@ -607,7 +508,7 @@ def scrape_article_route(article_id):
 
 
 @admin.route("/scrape-all-missing", methods=["POST"])
-@login_required
+@admin_required
 def scrape_all_missing():
     label = request.form.get("label", "")
     scrape_status = request.form.get("scrape_status", "").strip() or None
@@ -632,7 +533,7 @@ def scrape_all_missing():
 
 
 @admin.route("/rescrape-article/<int:article_id>", methods=["POST"])
-@login_required
+@admin_required
 def rescrape_article_route(article_id):
     article = Article.query.get_or_404(article_id)
     label = request.form.get("label", "")
@@ -645,8 +546,10 @@ def rescrape_article_route(article_id):
     except Exception as e:
         logger.error(f"Rescrape error: {e}")
     return redirect_to_articles(label, scrape_status)
+
+
 @admin.route("/force-regroup", methods=["POST"])
-@login_required
+@admin_required
 def force_regroup():
     label = request.form.get("label", "")
     scrape_status = request.form.get("scrape_status", "").strip() or None
@@ -656,7 +559,7 @@ def force_regroup():
 
 
 @admin.route("/force-resummarize", methods=["POST"])
-@login_required
+@admin_required
 def force_resummarize():
     label = request.form.get("label", "")
     scrape_status = request.form.get("scrape_status", "").strip() or None
@@ -666,7 +569,7 @@ def force_resummarize():
 
 
 @admin.route("/wake-ollama", methods=["POST"])
-@login_required
+@admin_required
 def wake_ollama():
     import os
     import wakeonlan
@@ -682,7 +585,7 @@ def wake_ollama():
 
 
 @admin.route("/reindex-search", methods=["POST"])
-@login_required
+@admin_required
 def reindex_search():
     with search_reindex_lock:
         current_status = _search_reindex_status_payload()
@@ -715,13 +618,13 @@ def reindex_search():
 
 
 @admin.route("/reindex-search-status")
-@login_required
+@admin_required
 def reindex_search_status():
     return jsonify(_search_reindex_status_payload())
 
 
 @admin.route("/ai-task/start", methods=["POST"])
-@login_required
+@admin_required
 def start_ai_task():
     payload = request.get_json(silent=True) or request.form
     task_type = (payload.get("task_type") or "").strip()
@@ -775,7 +678,7 @@ def start_ai_task():
 
 
 @admin.route("/ai-task-status/<task_type>/<int:resource_id>")
-@login_required
+@admin_required
 def ai_task_status(task_type, resource_id):
     if task_type not in {"story_summary", "story_deep_report", "article_summary"}:
         return jsonify({
@@ -786,7 +689,7 @@ def ai_task_status(task_type, resource_id):
 
 
 @admin.route("/reclassify-articles", methods=["POST"])
-@login_required
+@admin_required
 def reclassify_articles():
     label = request.form.get("label", "")
     scrape_status = request.form.get("scrape_status", "").strip() or None
@@ -796,7 +699,7 @@ def reclassify_articles():
 
 
 @admin.route("/deep-report/<int:story_id>", methods=["POST"])
-@login_required
+@admin_required
 def deep_report_route(story_id):
     story = Story.query.get_or_404(story_id)
     label = request.form.get("label", "")
@@ -816,7 +719,7 @@ def deep_report_route(story_id):
 
 
 @admin.route("/scrape-blocklist")
-@login_required
+@admin_required
 def scrape_blocklist():
     from aggregator.models import ScrapeBlocklist
     cutoff = datetime.utcnow() - timedelta(hours=24)
@@ -918,7 +821,7 @@ def scrape_blocklist():
 
 
 @admin.route("/audit-scrapes", methods=["POST"])
-@login_required
+@admin_required
 def audit_scrapes():
     label = request.form.get("label", "")
     from news_fetcher.fetch_and_store_articles import audit_existing_scrapes
@@ -927,7 +830,7 @@ def audit_scrapes():
 
 
 @admin.route("/unblock-domain", methods=["POST"])
-@login_required
+@admin_required
 def unblock_domain():
     from aggregator.models import ScrapeBlocklist
     domain = request.form.get("domain", "").strip()
@@ -940,18 +843,8 @@ def unblock_domain():
     return redirect(url_for("admin.scrape_blocklist"))
 
 
-@admin.route("/sync-static", methods=["POST"])
-@login_required
-def sync_static():
-    label = request.form.get("label", "")
-    scrape_status = request.form.get("scrape_status", "").strip() or None
-    from news_fetcher.fetch_and_store_articles import sync_static_ratings
-    dispatch_background_tool("Sync Curated Ratings", ["Applying curated bias to outlets and articles"], sync_static_ratings)
-    return redirect_to_articles(label, scrape_status)
-
-
 @admin.route("/merge-outlets", methods=["POST"])
-@login_required
+@admin_required
 def merge_outlets():
     from news_fetcher.fetch_and_store_articles import merge_duplicate_outlets
     try:
@@ -968,7 +861,7 @@ def merge_outlets():
 
 
 @admin.route("/metrics")
-@login_required
+@admin_required
 def metrics():
     return jsonify({
         "last_run_metrics": _load_json_setting("last_run_metrics"),
@@ -978,7 +871,7 @@ def metrics():
 
 
 @admin.route("/pipeline-status")
-@login_required
+@admin_required
 def pipeline_status():
     status = _load_json_setting("pipeline_live_status") or {
         "status": "idle",
@@ -1006,7 +899,7 @@ def pipeline_status():
 
 
 @admin.route("/db-stats")
-@login_required
+@admin_required
 def db_stats():
     from aggregator.models import Article, Story, Outlet, Edition
     from aggregator.search import get_index_stats
@@ -1042,7 +935,7 @@ def db_stats():
 
 
 @admin.route("/purge-embeddings", methods=["POST"])
-@login_required
+@admin_required
 def purge_embeddings():
     from aggregator.models import Article
     try:
@@ -1057,7 +950,7 @@ def purge_embeddings():
 
 
 @admin.route("/purge-articles", methods=["POST"])
-@login_required
+@admin_required
 def purge_articles():
     from aggregator.models import Article, Story
     try:
@@ -1080,7 +973,7 @@ def purge_articles():
 
 
 @admin.route("/purge-raw-payloads", methods=["POST"])
-@login_required
+@admin_required
 def purge_raw_payloads():
     from aggregator.models import RawArticlePayload
     try:
@@ -1095,7 +988,7 @@ def purge_raw_payloads():
 
 
 @admin.route("/vacuum-db", methods=["POST"])
-@login_required
+@admin_required
 def vacuum_db():
     try:
         connection = db.engine.raw_connection()
@@ -1116,18 +1009,55 @@ def vacuum_db():
 
 
 # ---------------------------------------------------------------------------
+# User management
+# ---------------------------------------------------------------------------
+
+@admin.route("/users", methods=["GET", "POST"])
+@admin_required
+def manage_users():
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        email = request.form.get("email", "").strip()
+        password = request.form.get("password", "")
+        is_admin = request.form.get("is_admin") == "on"
+
+        if not username or not email or not password:
+            flash("Username, email, and password are required.", "error")
+            return redirect(url_for("admin.manage_users"))
+
+        if User.query.filter_by(username=username).first():
+            flash(f"Username '{username}' is already taken.", "error")
+            return redirect(url_for("admin.manage_users"))
+
+        if User.query.filter_by(email=email).first():
+            flash(f"Email '{email}' is already in use.", "error")
+            return redirect(url_for("admin.manage_users"))
+
+        user = User(username=username, email=email, is_admin=is_admin)
+        user.set_password(password)
+        db.session.add(user)
+        db.session.commit()
+        role = "admin" if is_admin else "household"
+        flash(f"Created {role} user '{username}'.", "success")
+        return redirect(url_for("admin.manage_users"))
+
+    users = User.query.order_by(User.username).all()
+    return render_template("admin_users.html", users=users)
+
+
+# ---------------------------------------------------------------------------
 # Topic management CRUD
 # ---------------------------------------------------------------------------
 
 @admin.route("/topics")
-@login_required
+@admin_required
 def topics_list():
     topics = Topic.query.order_by(Topic.display_order, Topic.id).all()
     return render_template("admin_topics.html", topics=topics)
 
 
 @admin.route("/topics/new", methods=["GET"])
-@login_required
+@admin_required
 def topic_new():
     return render_template("admin_topic_form.html", topic=None)
 
@@ -1159,7 +1089,7 @@ def _read_topic_form_data(fallback_name):
 
 
 @admin.route("/topics", methods=["POST"])
-@login_required
+@admin_required
 def topic_create():
     name = request.form.get("name", "").strip()
     if not name:
@@ -1182,14 +1112,14 @@ def topic_create():
 
 
 @admin.route("/topics/<int:topic_id>/edit", methods=["GET"])
-@login_required
+@admin_required
 def topic_edit(topic_id):
     topic = Topic.query.get_or_404(topic_id)
     return render_template("admin_topic_form.html", topic=topic)
 
 
 @admin.route("/topics/<int:topic_id>", methods=["POST"])
-@login_required
+@admin_required
 def topic_update(topic_id):
     topic = Topic.query.get_or_404(topic_id)
 
@@ -1222,7 +1152,7 @@ def topic_update(topic_id):
 
 
 @admin.route("/topics/<int:topic_id>/toggle-active", methods=["POST"])
-@login_required
+@admin_required
 def topic_toggle_active(topic_id):
     topic = Topic.query.get_or_404(topic_id)
     topic.is_active = not topic.is_active
@@ -1231,7 +1161,7 @@ def topic_toggle_active(topic_id):
 
 
 @admin.route("/topics/<int:topic_id>/delete", methods=["POST"])
-@login_required
+@admin_required
 def topic_delete(topic_id):
     topic = Topic.query.get_or_404(topic_id)
     topic.is_active = False  # Soft-delete: keep history intact
@@ -1241,11 +1171,10 @@ def topic_delete(topic_id):
 
 
 @admin.route("/topics/reseed", methods=["POST"])
-@login_required
+@admin_required
 def reseed_topics():
     import subprocess
     import sys
-    from flask import flash
     try:
         subprocess.run([sys.executable, "seed_topics.py"], check=True, capture_output=True, text=True)
         flash("Topics successfully reseeded from country configuration.", "success")

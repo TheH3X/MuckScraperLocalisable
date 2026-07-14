@@ -37,3 +37,4 @@ catcode.sh
 TROUBLESHOOTINGHL.md
 tests
 scripts
+.venv/

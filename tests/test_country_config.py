@@ -58,10 +58,14 @@ class SouthAfricaCountryConfigTests(unittest.TestCase):
         self.assertIn("SA Politics", topics)
         self.assertIn("SA News", topics)
 
-    def test_bias_modes_cover_sa_topics(self):
-        bias_modes = self.cfg_mod.get_config()["bias_modes"]
-        self.assertEqual(bias_modes["SA Politics"], "political")
-        self.assertEqual(bias_modes["SA News"], "political")
+    def test_sa_topics_present_without_bias_modes(self):
+        cfg = self.cfg_mod.get_config()
+        labels = [t["label"] for t in self.cfg_mod.get_topics()]
+        self.assertIn("SA Politics", labels)
+        self.assertIn("SA News", labels)
+        self.assertNotIn("bias_modes", cfg)
+        self.assertNotIn("outlet_bias", cfg)
+        self.assertNotIn("bias_labels", cfg)
 
     def test_seed_topics_reads_from_country_config(self):
         seed_source = (ROOT / "seed_topics.py").read_text(encoding="utf-8")

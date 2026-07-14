@@ -7,7 +7,7 @@
 </head>
 <body>
 
-{% from 'newspaper_macros.html' import archive_drawer, top_nav, masthead, outlet_bias_tag, theme_script %}
+{% from 'newspaper_macros.html' import archive_drawer, top_nav, masthead, outlet_tag, theme_script %}
 {{ archive_drawer(recent_editions) }}
 
 <div class="container narrow">
@@ -95,7 +95,7 @@
             {% endif %}
         </h3>
         <div class="outlet-tags">
-            {{ outlet_bias_tag(article.outlet) }}
+            {{ outlet_tag(article.outlet) }}
             {% if article.accessibility_reason %}
             <span class="reader-meta" style="margin-left: 0.5rem;">Could not read full text (paywall or block)</span>
             {% endif %}
