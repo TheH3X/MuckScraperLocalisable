@@ -8,7 +8,7 @@
 </head>
 <body>
 
-{% from 'newspaper_macros.html' import archive_drawer, top_nav, masthead, outlet_bias_tag, theme_script %}
+{% from 'newspaper_macros.html' import archive_drawer, top_nav, masthead, outlet_tag, theme_script %}
 {{ archive_drawer(recent_editions, edition.id) }}
 
 <div class="container">
@@ -26,6 +26,14 @@
         </div>
     </div>
 
+    {% if unrated_count and current_user.is_authenticated %}
+    <div class="unrated-banner">
+        {{ unrated_count }} source{{ 's' if unrated_count != 1 else '' }} in this edition
+        {{ 'are' if unrated_count != 1 else 'is' }} new to you —
+        <a href="{{ url_for('prefs.settings_sources') }}">review sources</a>
+    </div>
+    {% endif %}
+
     {% if entries %}
     <div class="news-grid">
         {% for entry in entries %}
@@ -34,7 +42,7 @@
             {% set lead = entry.lead_article %}
             {% set featured_article = lead if lead and lead.image_url else (story.display_articles|selectattr('image_url')|first) %}
             {% set image_url = edition_story.source_image_url or (featured_article.image_url if featured_article else None) %}
-            {% set article_count = story.articles|length %}
+            {% set article_count = story.display_articles|length %}
             {% set outlet_count = story.unique_outlets|length %}
             {% set lead_outlet = lead.outlet.name if lead and lead.outlet else None %}
             {% set lead_label = 'Latest' if entry.kind_class == 'developing' else 'Full report' %}
@@ -97,7 +105,7 @@
 
                     <div class="outlet-tags">
                         {% for outlet in story.unique_outlets[:6] %}
-                            {{ outlet_bias_tag(outlet) }}
+                            {{ outlet_tag(outlet) }}
                         {% endfor %}
                     </div>
 

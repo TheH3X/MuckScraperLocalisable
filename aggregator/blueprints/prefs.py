@@ -1,7 +1,7 @@
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 
-from aggregator.models import Outlet, User
+from aggregator.models import Outlet
 from aggregator.outlet_prefs import (
     VALID_PREFERENCES,
     outlets_by_preference,
