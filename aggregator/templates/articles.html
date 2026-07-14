@@ -607,23 +607,6 @@
             color: var(--text-faint);
         }
 
-        .bias-tag {
-            display: inline-block;
-            font-size: 10px;
-            font-weight: 800;
-            padding: 2px 8px;
-            border-radius: 6px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .bias-1    { background-color: #1a6bb5; color: white; }
-        .bias-2    { background-color: #6aaee0; color: white; }
-        .bias-3    { background-color: #888;    color: white; }
-        .bias-4    { background-color: #e07b6a; color: white; }
-        .bias-5    { background-color: #b51a1a; color: white; }
-        .bias-none { background-color: #ddd;    color: #666;  }
-
         .article-actions { margin-left: auto; display: flex; gap: 8px; }
 
         .empty { text-align: center; padding: 80px 0; color: var(--text-faint); font-style: italic; }
@@ -850,51 +833,6 @@
                                     <span>IN THIS STORY</span>
                                 </div>
 
-                                {% set counts = namespace(b1=0, b2=0, b3=0, b4=0, b5=0) %}
-                                {% for art in story.articles %}
-                                    {% if art.bias_score == 1 %}{% set counts.b1 = counts.b1 + 1 %}
-                                    {% elif art.bias_score == 2 %}{% set counts.b2 = counts.b2 + 1 %}
-                                    {% elif art.bias_score == 3 %}{% set counts.b3 = counts.b3 + 1 %}
-                                    {% elif art.bias_score == 4 %}{% set counts.b4 = counts.b4 + 1 %}
-                                    {% elif art.bias_score == 5 %}{% set counts.b5 = counts.b5 + 1 %}
-                                    {% endif %}
-                                {% endfor %}
-
-                                <div style="display: flex; gap: 10px; margin-bottom: 20px; padding: 15px; background: rgba(0,0,0,0.02); border-radius: 12px; border: 1px solid var(--border);">
-                                    <!-- Group 1 -->
-                                    <div style="flex: 1; text-align: center; border-right: 1px solid var(--border); padding: 0 5px;">
-                                        <div style="font-size: 11px; font-weight: 800; color: #1a6bb5; text-transform: uppercase; margin-bottom: 8px; border-bottom: 2px solid #1a6bb5; padding-bottom: 4px;">{{ bias_label(1) }}</div>
-                                        <div style="font-size: 24px; font-weight: 900; color: var(--text);">{{ counts.b1 + counts.b2 }}</div>
-                                    </div>
-                                    <!-- Group 2 -->
-                                    <div style="flex: 1; text-align: center; border-right: 1px solid var(--border); padding: 0 5px;">
-                                        <div style="font-size: 11px; font-weight: 800; color: #888; text-transform: uppercase; margin-bottom: 8px; border-bottom: 2px solid #888; padding-bottom: 4px;">{{ bias_label(3) }}</div>
-                                        <div style="font-size: 24px; font-weight: 900; color: var(--text);">{{ counts.b3 }}</div>
-                                    </div>
-                                    <!-- Group 3 -->
-                                    <div style="flex: 1; text-align: center; padding: 0 5px;">
-                                        <div style="font-size: 11px; font-weight: 800; color: #b51a1a; text-transform: uppercase; margin-bottom: 8px; border-bottom: 2px solid #b51a1a; padding-bottom: 4px;">{{ bias_label(5) }}</div>
-                                        <div style="font-size: 24px; font-weight: 900; color: var(--text);">{{ counts.b4 + counts.b5 }}</div>
-                                    </div>
-                                </div>
-
-                                {% if story.enrichment_direction and story.bias_gap >= 2 %}
-                                <div class="action-row" style="margin-bottom: 12px;">
-                                    <form method="POST" action="{{ url_for('admin.enrich_story_balance', story_id=story.id) }}" style="width: 100%;">
-                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                        <input type="hidden" name="label" value="{{ active_label or '' }}">
-                                        <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
-                                        <button type="submit" class="btn btn-muted" style="width: 100%; padding: 10px 12px; font-weight: 700;">
-                                            {% if story.enrichment_direction == 'right' %}
-                                                Fetch More {{ bias_label(5) }} Coverage
-                                            {% else %}
-                                                Fetch More {{ bias_label(1) }} Coverage
-                                            {% endif %}
-                                        </button>
-                                    </form>
-                                </div>
-                                {% endif %}
-
                                 <div class="action-row" style="margin-bottom: 0;">
                                     <a href="{{ url_for('public.view_story', story_id=story.id) }}" class="btn btn-dark" style="text-decoration: none; width: 100%; text-align: center; padding: 12px; font-weight: 800; letter-spacing: 1px;">
                                         VIEW FULL COVERAGE & ANALYSIS →
@@ -915,31 +853,12 @@
                                     <a class="full-text-link" href="{{ url_for('public.view_article', article_id=article.id) }}">Full Summary & Text →</a>
 
                                     <div style="flex-basis: 100%; display: flex; align-items: center; gap: 8px; margin-top: 4px;">
-                                        {% if article.bias_score %}
-                                            <span class="bias-tag bias-{{ article.bias_score | int }}">{{ bias_label(article.bias_score) }}</span>
-                                        {% endif %}
-
-                                        {% if article.outlet.bias_source == "static" %}
-                                            <span class="source-badge" title="Curated rating">📋</span>
-                                        {% elif article.outlet.bias_source == "ai" %}
-                                            <span class="source-badge ai-badge" title="Rated by AI">AI</span>
-                                        {% endif %}
-
                                         <span class="article-actions">
                                             <button type="button" class="btn btn-muted"
                                                 title="AI Summary"
                                                 onclick="startAiTask('article_summary', {{ article.id }}, this)">
                                                 {{ '↻' if article.summary else '✦' }} Summary
                                             </button>
-                                            <form method="POST" action="{{ url_for('admin.rate_article', article_id=article.id) }}">
-                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                                <input type="hidden" name="label" value="{{ active_label or '' }}">
-                                                <input type="hidden" name="scrape_status" value="{{ active_scrape_status or '' }}">
-                                                <button type="submit" class="btn btn-orange"
-                                                    title="Rate Bias">
-                                                    ✦ Bias
-                                                </button>
-                                            </form>
                                         </span>
 
                                         <div class="scrape-meta">
