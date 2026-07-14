@@ -117,31 +117,6 @@ def is_roundup_article(title=None, url=None):
     return any(hint in parsed_path for hint in ROUNDUP_URL_HINTS)
 
 
-def bias_bucket_for_score(score):
-    if score is None:
-        return "unrated"
-    
-    bucket = int(round(score))
-    if bucket < 1: bucket = 1
-    if bucket > 5: bucket = 5
-    return str(bucket)
-
-
-def bias_side_for_score(score):
-    """
-    Map a numeric bias score to a coarse editorial side for balance logic.
-    1-2 = leftish, 3 = center, 4-5 = rightish, None = unrated.
-    """
-    if score is None:
-        return "unrated"
-    bucket = int(round(score))
-    if bucket <= 2:
-        return "leftish"
-    if bucket == 3:
-        return "center"
-    return "rightish"
-
-
 def low_value_article_reason(title=None, url=None):
     if is_roundup_article(title, url):
         return "roundup"
@@ -395,20 +370,21 @@ def select_lead_article(story, edition_story=None, candidates=None):
 def story_earns_deep_report(story):
     """
     Deep reports are earned by multi-outlet contested coverage, not headline_score alone.
-    Requires ≥3 articles and mixed left+right bias coverage.
+    Requires ≥3 articles from ≥2 distinct outlets.
     """
     articles = list(getattr(story, "articles", None) or [])
     if len(articles) < 3:
         return False
 
-    counts = {"leftish": 0, "rightish": 0}
+    outlet_ids = set()
     for article in articles:
-        score = getattr(article, "bias_score", None)
-        if score is None:
-            outlet = getattr(article, "outlet", None)
-            if outlet is not None:
-                score = getattr(outlet, "bias_score", None)
-        side = bias_side_for_score(score)
-        if side in counts:
-            counts[side] += 1
-    return bool(counts["leftish"]) and bool(counts["rightish"])
+        outlet_id = getattr(article, "outlet_id", None)
+        if outlet_id is not None:
+            outlet_ids.add(outlet_id)
+            continue
+        outlet = getattr(article, "outlet", None)
+        if outlet is not None and getattr(outlet, "id", None) is not None:
+            outlet_ids.add(outlet.id)
+        elif outlet is not None and getattr(outlet, "name", None):
+            outlet_ids.add(("name", outlet.name.strip().lower()))
+    return len(outlet_ids) >= 2

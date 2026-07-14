@@ -27,12 +27,13 @@ class Outlet(db.Model):
     name        = db.Column(db.String, nullable=False)
     url         = db.Column(db.String)
     description = db.Column(db.Text)
-    bias_score  = db.Column(db.Float)
-    bias_retry_count = db.Column(db.Integer, default=0, nullable=False, server_default='0')
-    static_bias_score = db.Column(db.Float, nullable=True)
-    bias_source = db.Column(db.String(16), nullable=True)
+    first_seen_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=True)
+    discovery_source = db.Column(db.String(32), nullable=True)  # newsapi | gnews | rss
 
     articles = db.relationship("Article", backref="outlet", lazy=True)
+    user_preferences = db.relationship(
+        "UserOutletPreference", back_populates="outlet", cascade="all, delete-orphan"
+    )
 
 
 class Topic(db.Model):
@@ -55,7 +56,6 @@ class Topic(db.Model):
     fetch_query    = db.Column(db.String(512), nullable=True)
     gnews_query    = db.Column(db.String(512), nullable=True)
     gnews_category = db.Column(db.String(32), nullable=True)
-    bias_mode      = db.Column(db.String(16), nullable=True)   # "political" | "editorial" | "none" | None
 
     # Prompt / persona configuration
     analysis_persona       = db.Column(db.String(100), nullable=True)  # e.g. "political analyst"
@@ -115,7 +115,6 @@ class Article(db.Model):
         db.Index("ix_articles_date",       "date"),
         db.Index("ix_articles_outlet_id",  "outlet_id"),
         db.Index("ix_articles_story_id",   "story_id"),
-        db.Index("ix_articles_bias_score", "bias_score"),
     )
 
     id         = db.Column(db.Integer, primary_key=True)
@@ -127,7 +126,6 @@ class Article(db.Model):
     story_id   = db.Column(db.Integer, db.ForeignKey("stories.id"))
     date       = db.Column(db.DateTime, default=datetime.utcnow) # This is Published Date
     fetched_at = db.Column(db.DateTime, default=datetime.utcnow) # When we actually scraped it
-    bias_score = db.Column(db.Float)
     image_url  = db.Column(db.String)
     embedding  = db.Column(Vector(768))
     summary    = db.Column(db.Text)
@@ -202,11 +200,35 @@ class User(db.Model, UserMixin):
     password_hash = db.Column(db.String(256))
     is_admin      = db.Column(db.Boolean, default=False)
 
+    outlet_preferences = db.relationship(
+        "UserOutletPreference", back_populates="user", cascade="all, delete-orphan"
+    )
+
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+
+
+class UserOutletPreference(db.Model):
+    """Per-user source curation: allow, prefer, or mute an outlet."""
+
+    __tablename__ = "user_outlet_preferences"
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "outlet_id", name="uq_user_outlet_pref"),
+        db.Index("ix_user_outlet_prefs_user", "user_id"),
+        db.Index("ix_user_outlet_prefs_outlet", "outlet_id"),
+    )
+
+    id         = db.Column(db.Integer, primary_key=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    outlet_id  = db.Column(db.Integer, db.ForeignKey("outlets.id", ondelete="CASCADE"), nullable=False)
+    preference = db.Column(db.String(16), nullable=False)  # allow | prefer | mute
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user   = db.relationship("User", back_populates="outlet_preferences")
+    outlet = db.relationship("Outlet", back_populates="user_preferences")
 
 
 class ScrapeBlocklist(db.Model):

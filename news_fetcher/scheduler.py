@@ -4,16 +4,9 @@
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from aggregator import create_app, db
-from aggregator.article_signals import bias_bucket_for_score
 from aggregator.models import AppSetting
-from news_fetcher.fetch_and_store_articles import fetch_and_store_articles, process_current_edition, review_ambiguous_grouping_matches, sync_static_ratings, publish_edition, retry_unrated_outlets, clear_stale_single_article_headlines
-from news_fetcher.rss_fetcher import (
-    fetch_and_store_rss,
-    enrich_skewed_stories_with_right_feeds,
-    get_skewed_story_ids_for_right_enrichment,
-    enrich_skewed_stories_with_left_feeds,
-    get_skewed_story_ids_for_left_enrichment,
-)
+from news_fetcher.fetch_and_store_articles import fetch_and_store_articles, process_current_edition, review_ambiguous_grouping_matches, publish_edition, clear_stale_single_article_headlines
+from news_fetcher.rss_fetcher import fetch_and_store_rss
 from news_fetcher.headline_generator import generate_missing_headlines
 from datetime import datetime, timedelta, timezone
 import logging
@@ -137,8 +130,6 @@ def _build_scrape_outcome_history_entry(run_metrics, headline_site_metrics):
         "edition": headline_site_metrics.get("edition"),
         "run_scrape_statuses": dict(run_metrics.get("totals", {}).get("scrape_statuses", {})),
         "run_skipped": dict(run_metrics.get("totals", {}).get("skipped", {})),
-        "run_bias_buckets": dict(run_metrics.get("totals", {}).get("bias_buckets", {})),
-        "run_bias_sources": dict(run_metrics.get("totals", {}).get("bias_sources", {})),
         "headline_scrape": dict(headline_site_metrics.get("scrape", {}).get("articles_by_status", {})),
         "headline_readable_articles": headline_site_metrics.get("scrape", {}).get("readable_articles"),
         "headline_fully_read_articles": headline_site_metrics.get("scrape", {}).get("fully_read_articles"),
@@ -164,176 +155,6 @@ def _merge_counts(target, source):
         target[key] = target.get(key, 0) + value
 
 
-def _run_targeted_rss_enrichment_pass(config, run_metrics, ollama_state, entry_ranking):
-    """
-    Run one direction (left or right) of targeted RSS enrichment: a first
-    enrichment pass, an optional bias retry + headline reranking, then a
-    second pass on the reranked skewed stories with the same follow-up steps.
-
-    Returns (ranking_result, second_pass_ranking_result) so the caller can
-    chain `second_pass_ranking_result or ranking_result` into the next pass's
-    `entry_ranking`.
-    """
-    steps = run_metrics["steps"]
-    direction = config["direction"]
-
-    logging.info(f"--- Running targeted {config['direction_adj']} RSS enrichment ---")
-    try:
-        enrichment_metrics = config["enrich_func"]()
-        steps[config["enrichment_step"]] = enrichment_metrics
-        run_metrics["totals"]["input_articles"] += enrichment_metrics.get("input_articles", 0)
-        run_metrics["totals"]["stored"] += enrichment_metrics.get("stored", 0)
-        run_metrics["totals"]["new_outlets"] += enrichment_metrics.get("new_outlets", 0)
-        run_metrics["totals"]["stories_touched"] += enrichment_metrics.get("stories_touched", 0)
-        _merge_counts(run_metrics["totals"]["skipped"], enrichment_metrics.get("skipped"))
-        _merge_counts(run_metrics["totals"]["scrape_statuses"], enrichment_metrics.get("scrape_statuses"))
-        _merge_counts(run_metrics["totals"]["bias_buckets"], enrichment_metrics.get("bias_buckets"))
-        _merge_counts(run_metrics["totals"]["bias_sources"], enrichment_metrics.get("bias_sources"))
-    except Exception as e:
-        db.session.rollback()
-        logging.error(f"Error in targeted {direction} RSS enrichment: {e}")
-        run_metrics["status"] = "partial_error"
-        enrichment_metrics = {"status": "error", "reason": str(e), "stored": 0}
-        steps[config["enrichment_step"]] = enrichment_metrics
-
-    if enrichment_metrics.get("stored", 0) > 0:
-        logging.info(f"--- Refreshing outlet bias after targeted {direction} enrichment ---")
-        _check_ollama_status_for_report(ollama_state, config["bias_retry_ollama_label"])
-        try:
-            retry_unrated_outlets(ollama_budget=8)
-            steps[config["bias_retry_step"]] = {"status": "ok"}
-        except Exception as e:
-            db.session.rollback()
-            logging.error(f"Error retrying outlet bias after targeted {direction} enrichment: {e}")
-            run_metrics["status"] = "partial_error"
-            steps[config["bias_retry_step"]] = {"status": "error", "reason": str(e)}
-        try:
-            steps[config["ranking_step"]] = run_optional_headline_ranking()
-        except Exception as e:
-            db.session.rollback()
-            logging.error(f"Error reranking after targeted {direction} enrichment: {e}")
-            run_metrics["status"] = "partial_error"
-            steps[config["ranking_step"]] = {"status": "error", "reason": str(e)}
-
-        logging.info(f"--- Running second-pass targeted {direction} RSS enrichment on reranked skewed stories ---")
-        try:
-            reranked_target_ids = config["get_skewed_ids_func"](max_stories=5, candidate_pool=30)
-            if reranked_target_ids:
-                second_pass_metrics = config["enrich_func"](
-                    max_stories=5,
-                    max_articles_per_story=2,
-                    candidate_story_ids=reranked_target_ids,
-                )
-                second_pass_metrics["target_story_ids"] = reranked_target_ids
-                steps[config["second_pass_enrichment_step"]] = second_pass_metrics
-                run_metrics["totals"]["input_articles"] += second_pass_metrics.get("input_articles", 0)
-                run_metrics["totals"]["stored"] += second_pass_metrics.get("stored", 0)
-                run_metrics["totals"]["new_outlets"] += second_pass_metrics.get("new_outlets", 0)
-                run_metrics["totals"]["stories_touched"] += second_pass_metrics.get("stories_touched", 0)
-                _merge_counts(run_metrics["totals"]["skipped"], second_pass_metrics.get("skipped"))
-                _merge_counts(run_metrics["totals"]["scrape_statuses"], second_pass_metrics.get("scrape_statuses"))
-                _merge_counts(run_metrics["totals"]["bias_buckets"], second_pass_metrics.get("bias_buckets"))
-                _merge_counts(run_metrics["totals"]["bias_sources"], second_pass_metrics.get("bias_sources"))
-
-                if second_pass_metrics.get("stored", 0) > 0:
-                    _check_ollama_status_for_report(ollama_state, config["second_pass_bias_retry_ollama_label"])
-                    try:
-                        retry_unrated_outlets(ollama_budget=8)
-                        steps[config["second_pass_bias_retry_step"]] = {"status": "ok"}
-                    except Exception as e:
-                        db.session.rollback()
-                        logging.error(f"Error retrying outlet bias after second-pass targeted {direction} enrichment: {e}")
-                        run_metrics["status"] = "partial_error"
-                        steps[config["second_pass_bias_retry_step"]] = {"status": "error", "reason": str(e)}
-                    try:
-                        steps[config["second_pass_ranking_step"]] = run_optional_headline_ranking()
-                    except Exception as e:
-                        db.session.rollback()
-                        logging.error(f"Error reranking after second-pass targeted {direction} enrichment: {e}")
-                        run_metrics["status"] = "partial_error"
-                        steps[config["second_pass_ranking_step"]] = {"status": "error", "reason": str(e)}
-                else:
-                    steps[config["second_pass_bias_retry_step"]] = {
-                        "status": "skipped",
-                        "reason": "no_second_pass_enrichment_articles",
-                    }
-                    steps[config["second_pass_ranking_step"]] = steps[config["ranking_step"]]
-            else:
-                steps[config["second_pass_enrichment_step"]] = {
-                    "status": "skipped",
-                    "reason": "no_reranked_skewed_stories",
-                }
-                steps[config["second_pass_bias_retry_step"]] = {
-                    "status": "skipped",
-                    "reason": "no_reranked_skewed_stories",
-                }
-                steps[config["second_pass_ranking_step"]] = steps[config["ranking_step"]]
-        except Exception as e:
-            db.session.rollback()
-            logging.error(f"Error in second-pass targeted {direction} RSS enrichment: {e}")
-            run_metrics["status"] = "partial_error"
-            steps[config["second_pass_enrichment_step"]] = {
-                "status": "error",
-                "reason": str(e),
-            }
-            steps[config["second_pass_bias_retry_step"]] = {
-                "status": "skipped",
-                "reason": "second_pass_error",
-            }
-            steps[config["second_pass_ranking_step"]] = {
-                "status": "skipped",
-                "reason": "second_pass_error",
-            }
-    else:
-        steps[config["bias_retry_step"]] = {
-            "status": "skipped",
-            "reason": "no_enrichment_articles",
-        }
-        steps[config["ranking_step"]] = entry_ranking
-        steps[config["second_pass_enrichment_step"]] = {
-            "status": "skipped",
-            "reason": "first_pass_no_enrichment_articles",
-        }
-        steps[config["second_pass_bias_retry_step"]] = {
-            "status": "skipped",
-            "reason": "first_pass_no_enrichment_articles",
-        }
-        steps[config["second_pass_ranking_step"]] = steps[config["ranking_step"]]
-
-    return steps[config["ranking_step"]], steps[config["second_pass_ranking_step"]]
-
-
-RIGHT_RSS_ENRICHMENT_CONFIG = {
-    "direction": "right",
-    "direction_adj": "right-leaning",
-    "enrich_func": enrich_skewed_stories_with_right_feeds,
-    "get_skewed_ids_func": get_skewed_story_ids_for_right_enrichment,
-    "enrichment_step": "targeted_right_rss_enrichment",
-    "bias_retry_step": "targeted_right_rss_bias_retry",
-    "ranking_step": "headline_ranking",
-    "second_pass_enrichment_step": "targeted_right_rss_enrichment_second_pass",
-    "second_pass_bias_retry_step": "targeted_right_rss_second_pass_bias_retry",
-    "second_pass_ranking_step": "headline_ranking_post_second_pass",
-    "bias_retry_ollama_label": "before_targeted_enrichment_bias_retry",
-    "second_pass_bias_retry_ollama_label": "before_second_pass_targeted_enrichment_bias_retry",
-}
-
-LEFT_RSS_ENRICHMENT_CONFIG = {
-    "direction": "left",
-    "direction_adj": "left-leaning",
-    "enrich_func": enrich_skewed_stories_with_left_feeds,
-    "get_skewed_ids_func": get_skewed_story_ids_for_left_enrichment,
-    "enrichment_step": "targeted_left_rss_enrichment",
-    "bias_retry_step": "targeted_left_rss_bias_retry",
-    "ranking_step": "headline_ranking_after_left_enrichment",
-    "second_pass_enrichment_step": "targeted_left_rss_enrichment_second_pass",
-    "second_pass_bias_retry_step": "targeted_left_rss_second_pass_bias_retry",
-    "second_pass_ranking_step": "headline_ranking_post_left_second_pass",
-    "bias_retry_ollama_label": "before_targeted_left_enrichment_bias_retry",
-    "second_pass_bias_retry_ollama_label": "before_second_pass_targeted_left_enrichment_bias_retry",
-}
-
-
 def build_headline_site_metrics():
     from aggregator.models import Edition, EditionStory
 
@@ -350,9 +171,6 @@ def build_headline_site_metrics():
     stories = [edition_story.story for edition_story in edition_stories]
     article_ids = set()
     outlet_ids = set()
-    article_bias_counts = {}
-    outlet_bias_counts = {}
-    outlet_bias_source_counts = {"static": 0, "ai": 0, "unrated": 0}
     scrape_status_counts = {
         "success": 0,
         "fallback": 0,
@@ -361,39 +179,22 @@ def build_headline_site_metrics():
         "skipped": 0,
         "pending": 0,
     }
-    stories_with_bias_mix = 0
-    stories_with_unrated_articles = 0
     multi_source_story_count = 0
 
     for story in stories:
-        story_bias_buckets = set()
         story_outlet_ids = set()
 
         for article in story.articles:
             article_ids.add(article.id)
             if article.outlet_id:
                 story_outlet_ids.add(article.outlet_id)
+                outlet_ids.add(article.outlet_id)
 
             scrape_status = (article.scrape_status or "pending").lower()
             scrape_status_counts[scrape_status] = scrape_status_counts.get(scrape_status, 0) + 1
 
-            bucket = bias_bucket_for_score(article.bias_score if article.bias_score is not None else (article.outlet.bias_score if article.outlet else None))
-            article_bias_counts[bucket] = article_bias_counts.get(bucket, 0) + 1
-            story_bias_buckets.add(bucket)
-
-            if article.outlet and article.outlet.id not in outlet_ids:
-                outlet_ids.add(article.outlet.id)
-                outlet_bucket = bias_bucket_for_score(article.outlet.bias_score)
-                outlet_bias_counts[outlet_bucket] = outlet_bias_counts.get(outlet_bucket, 0) + 1
-                bias_source = article.outlet.bias_source or "unrated"
-                outlet_bias_source_counts[bias_source] = outlet_bias_source_counts.get(bias_source, 0) + 1
-
         if len(story_outlet_ids) > 1:
             multi_source_story_count += 1
-        if len({bucket for bucket in story_bias_buckets if bucket != "unrated"}) >= 2:
-            stories_with_bias_mix += 1
-        if "unrated" in story_bias_buckets:
-            stories_with_unrated_articles += 1
 
     return {
         "status": "ok",
@@ -408,13 +209,6 @@ def build_headline_site_metrics():
         "article_count": len(article_ids),
         "outlet_count": len(outlet_ids),
         "multi_source_story_count": multi_source_story_count,
-        "stories_with_bias_mix": stories_with_bias_mix,
-        "stories_with_unrated_articles": stories_with_unrated_articles,
-        "bias": {
-            "articles_by_bucket": article_bias_counts,
-            "outlets_by_bucket": outlet_bias_counts,
-            "outlets_by_source": outlet_bias_source_counts,
-        },
         "scrape": {
             "articles_by_status": scrape_status_counts,
             "readable_articles": scrape_status_counts.get("success", 0) + scrape_status_counts.get("fallback", 0),
@@ -442,28 +236,6 @@ def set_last_fetch_time():
         setting.value = datetime.utcnow().isoformat()
     else:
         setting = AppSetting(key="last_fetch", value=datetime.utcnow().isoformat())
-        db.session.add(setting)
-    db.session.commit()
-
-
-def get_last_static_sync():
-    """Get the last static sync timestamp from the database."""
-    setting = AppSetting.query.filter_by(key="last_static_sync").first()
-    if setting and setting.value:
-        try:
-            return datetime.fromisoformat(setting.value)
-        except Exception:
-            return None
-    return None
-
-
-def set_last_static_sync():
-    """Store the current time as the last static sync timestamp."""
-    setting = AppSetting.query.filter_by(key="last_static_sync").first()
-    if setting:
-        setting.value = datetime.utcnow().isoformat()
-    else:
-        setting = AppSetting(key="last_static_sync", value=datetime.utcnow().isoformat())
         db.session.add(setting)
     db.session.commit()
 
@@ -728,13 +500,7 @@ def run_all_fetches(run_full_pipeline=True):
     
     if run_full_pipeline:
         steps_remaining.extend([
-            "Retrying unrated outlets",
-            "Syncing static bias ratings",
-            "Headline ranking (Initial)",
-            "Targeted Right RSS Enrichment",
-            "Headline ranking (Right)",
-            "Targeted Left RSS Enrichment",
-            "Headline ranking (Left)",
+            "Headline ranking",
             "Publishing edition",
             "Processing current edition",
             "Exporting static site"
@@ -761,8 +527,6 @@ def run_all_fetches(run_full_pipeline=True):
                 "stories_touched": 0,
                 "skipped": {},
                 "scrape_statuses": {},
-                "bias_buckets": {},
-                "bias_sources": {},
             },
             "steps": {},
         }
@@ -803,8 +567,6 @@ def run_all_fetches(run_full_pipeline=True):
                     touched_story_ids.update(provider_metrics.get("story_ids", []))
                     _merge_counts(run_metrics["totals"]["skipped"], provider_metrics.get("skipped"))
                     _merge_counts(run_metrics["totals"]["scrape_statuses"], provider_metrics.get("scrape_statuses"))
-                    _merge_counts(run_metrics["totals"]["bias_buckets"], provider_metrics.get("bias_buckets"))
-                    _merge_counts(run_metrics["totals"]["bias_sources"], provider_metrics.get("bias_sources"))
             except Exception as e:
                 db.session.rollback()
                 logging.error(f"Error fetching {fetch.display_label}: {e}")
@@ -834,8 +596,6 @@ def run_all_fetches(run_full_pipeline=True):
             touched_story_ids.update(rss_metrics.get("story_ids", []))
             _merge_counts(run_metrics["totals"]["skipped"], rss_metrics.get("skipped"))
             _merge_counts(run_metrics["totals"]["scrape_statuses"], rss_metrics.get("scrape_statuses"))
-            _merge_counts(run_metrics["totals"]["bias_buckets"], rss_metrics.get("bias_buckets"))
-            _merge_counts(run_metrics["totals"]["bias_sources"], rss_metrics.get("bias_sources"))
         except Exception as e:
             db.session.rollback()
             logging.error(f"Error fetching RSS feeds: {e}")
@@ -863,52 +623,7 @@ def run_all_fetches(run_full_pipeline=True):
         steps_completed.append(step_name)
 
         if run_full_pipeline:
-            # Run Bias Checker ONCE after all fetches
-            step_name = "Retrying unrated outlets"
-            if step_name in steps_remaining:
-                steps_remaining.remove(step_name)
-            _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
-            
-            logging.info("--- Retrying unrated outlets (Bias Checker) ---")
-            _check_ollama_status_for_report(ollama_state, "before_retry_unrated_outlets")
-            try:
-                retry_unrated_outlets(ollama_budget=30)
-                run_metrics["steps"]["retry_unrated_outlets"] = {"status": "ok"}
-            except Exception as e:
-                db.session.rollback()
-                logging.error(f"Error checking outlet bias: {e}")
-                run_metrics["status"] = "partial_error"
-                run_metrics["steps"]["retry_unrated_outlets"] = {"status": "error", "reason": str(e)}
-            steps_completed.append(step_name)
-
-            # Run static sync once a month
-            step_name = "Syncing static bias ratings"
-            if step_name in steps_remaining:
-                steps_remaining.remove(step_name)
-            _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
-
-            last_sync = get_last_static_sync()
-            if last_sync is None or (datetime.utcnow() - last_sync).days >= 30:
-                logging.info("--- Syncing static bias ratings ---")
-                try:
-                    sync_static_ratings()
-                    set_last_static_sync()
-                    run_metrics["steps"]["static_sync"] = {"status": "ok"}
-                except Exception as e:
-                    db.session.rollback()
-                    logging.error(f"Error syncing static ratings: {e}")
-                    run_metrics["status"] = "partial_error"
-                    run_metrics["steps"]["static_sync"] = {"status": "error", "reason": str(e)}
-            else:
-                days_since = (datetime.utcnow() - last_sync).days
-                logging.info(f"--- static sync skipped ({days_since}/30 days) ---")
-                run_metrics["steps"]["static_sync"] = {
-                    "status": "skipped",
-                    "days_since_last_sync": days_since,
-                }
-            steps_completed.append(step_name)
-
-            step_name = "Headline ranking (Initial)"
+            step_name = "Headline ranking"
             if step_name in steps_remaining:
                 steps_remaining.remove(step_name)
             _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
@@ -934,35 +649,12 @@ def run_all_fetches(run_full_pipeline=True):
                 run_metrics["status"] = "partial_error"
                 run_metrics["steps"]["review_ambiguous_grouping_matches"] = {"status": "error", "reason": str(e)}
             try:
-                initial_ranking = run_optional_headline_ranking()
-                run_metrics["steps"]["headline_ranking_initial"] = initial_ranking
+                run_metrics["steps"]["headline_ranking"] = run_optional_headline_ranking()
             except Exception as e:
                 db.session.rollback()
                 logging.error(f"Error in headline ranking: {e}")
                 run_metrics["status"] = "partial_error"
-                initial_ranking = {"status": "error", "reason": str(e)}
-                run_metrics["steps"]["headline_ranking_initial"] = initial_ranking
-            steps_completed.append(step_name)
-
-            step_name = "Targeted Right RSS Enrichment"
-            if step_name in steps_remaining:
-                steps_remaining.remove(step_name)
-            _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
-
-            right_ranking, right_second_pass_ranking = _run_targeted_rss_enrichment_pass(
-                RIGHT_RSS_ENRICHMENT_CONFIG, run_metrics, ollama_state, initial_ranking
-            )
-            steps_completed.append(step_name)
-
-            step_name = "Targeted Left RSS Enrichment"
-            if step_name in steps_remaining:
-                steps_remaining.remove(step_name)
-            _broadcast_step("running", step_name, run_started_at, steps_completed, steps_remaining, ollama_state.get("up_at_start"))
-
-            _run_targeted_rss_enrichment_pass(
-                LEFT_RSS_ENRICHMENT_CONFIG, run_metrics, ollama_state,
-                right_second_pass_ranking or right_ranking,
-            )
+                run_metrics["steps"]["headline_ranking"] = {"status": "error", "reason": str(e)}
             steps_completed.append(step_name)
 
             step_name = "Publishing edition"
@@ -1011,23 +703,9 @@ def run_all_fetches(run_full_pipeline=True):
                 run_metrics["steps"]["static_export"] = {"status": "error", "reason": str(e)}
             steps_completed.append(step_name)
         else:
-            run_metrics["steps"]["retry_unrated_outlets"] = {"status": "skipped", "reason": "fetch_only_run"}
-            run_metrics["steps"]["static_sync"] = {"status": "skipped", "reason": "fetch_only_run"}
             run_metrics["steps"]["clear_stale_single_article_headlines"] = {"status": "skipped", "reason": "fetch_only_run"}
             run_metrics["steps"]["review_ambiguous_grouping_matches"] = {"status": "skipped", "reason": "fetch_only_run"}
-            run_metrics["steps"]["headline_ranking_initial"] = {"status": "skipped", "reason": "fetch_only_run"}
-            run_metrics["steps"]["targeted_right_rss_enrichment"] = {"status": "skipped", "reason": "fetch_only_run"}
-            run_metrics["steps"]["targeted_right_rss_bias_retry"] = {"status": "skipped", "reason": "fetch_only_run"}
             run_metrics["steps"]["headline_ranking"] = {"status": "skipped", "reason": "fetch_only_run"}
-            run_metrics["steps"]["targeted_right_rss_enrichment_second_pass"] = {"status": "skipped", "reason": "fetch_only_run"}
-            run_metrics["steps"]["targeted_right_rss_second_pass_bias_retry"] = {"status": "skipped", "reason": "fetch_only_run"}
-            run_metrics["steps"]["targeted_left_rss_enrichment"] = {"status": "skipped", "reason": "fetch_only_run"}
-            run_metrics["steps"]["targeted_left_rss_bias_retry"] = {"status": "skipped", "reason": "fetch_only_run"}
-            run_metrics["steps"]["headline_ranking_after_left_enrichment"] = {"status": "skipped", "reason": "fetch_only_run"}
-            run_metrics["steps"]["targeted_left_rss_enrichment_second_pass"] = {"status": "skipped", "reason": "fetch_only_run"}
-            run_metrics["steps"]["targeted_left_rss_second_pass_bias_retry"] = {"status": "skipped", "reason": "fetch_only_run"}
-            run_metrics["steps"]["headline_ranking_post_left_second_pass"] = {"status": "skipped", "reason": "fetch_only_run"}
-            run_metrics["steps"]["headline_ranking_post_second_pass"] = {"status": "skipped", "reason": "fetch_only_run"}
             run_metrics["steps"]["publish_edition"] = {"status": "skipped", "reason": "fetch_only_run"}
             run_metrics["steps"]["process_current_edition"] = {"status": "skipped", "reason": "fetch_only_run"}
             run_metrics["steps"]["static_export"] = {"status": "skipped", "reason": "fetch_only_run"}

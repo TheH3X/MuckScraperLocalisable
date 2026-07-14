@@ -151,7 +151,6 @@ def _serialize_article(article):
         "scrape_status": article.scrape_status or "pending",
         "date": article.date.isoformat() if article.date else None,
         "fetched_at": article.fetched_at.isoformat() if article.fetched_at else None,
-        "bias_score": article.bias_score,
     }
 
 

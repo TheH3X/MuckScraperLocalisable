@@ -1,6 +1,7 @@
 from flask import Blueprint, render_template, redirect, url_for, flash, request
 from flask_login import login_user, logout_user, current_user
 from aggregator.models import User
+from aggregator.authz import login_redirect_endpoint
 from urllib.parse import urlparse
 
 auth = Blueprint("auth", __name__)
@@ -8,7 +9,7 @@ auth = Blueprint("auth", __name__)
 @auth.route("/login", methods=["GET", "POST"])
 def login():
     if current_user.is_authenticated:
-        return redirect(url_for("admin.list_articles"))
+        return redirect(url_for(login_redirect_endpoint()))
     
     if request.method == "POST":
         username = request.form.get("username")
@@ -20,7 +21,9 @@ def login():
             login_user(user, remember=remember)
             next_page = request.args.get("next")
             if not next_page or urlparse(next_page).netloc != "":
-                next_page = url_for("admin.list_articles")
+                next_page = url_for(login_redirect_endpoint())
+            elif not next_page.startswith("/"):
+                next_page = url_for(login_redirect_endpoint())
             return redirect(next_page)
         else:
             flash("Invalid username or password")

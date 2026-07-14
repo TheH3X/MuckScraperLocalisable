@@ -163,52 +163,6 @@ COUNTRY_CONFIGS = {
             "https://www.aljazeera.com/xml/rss/all.xml",
             "https://feeds.apnews.com/rss/topnews",
         ],
-        "right_enrichment_feeds": [
-            "https://www.businesslive.co.za/rss/",
-            "https://www.citizen.co.za/feed/",
-        ],
-        "left_enrichment_feeds": [
-            "http://rss.iol.io/iol/news",
-            "https://www.groundup.org.za/rss/",
-            "https://mg.co.za/feed/",
-        ],
-
-        # Outlet bias ratings (1 = Far-Left, 5 = Right)
-        "outlet_bias": {
-            # 1 = Far-Left / Populist Left
-            "IOL": 1,
-            
-            # 2 = Center-Left / Social Justice
-            "GroundUp": 2,
-            "Mail & Guardian": 2,
-            "amaBhungane": 2,
-            
-            # 3 = Center / Institutionalist
-            "News24": 3,
-            "Daily Maverick": 3,
-            "SABC News": 3,
-            "EWN": 3,
-            "TimesLive": 3,
-            "Fin24": 3,
-            "The Witness": 3,
-            
-            # 4 = Center-Right / Pro-Business
-            "eNCA": 4,
-            "Business Day": 4,
-            "The Citizen": 4,
-            "Rapport": 4,
-            "Beeld": 4,
-            "Die Burger": 4,
-            
-            # 5 = Right / Conservative
-            "Maroela Media": 5,
-            
-            # Wire services
-            "Reuters": 3,
-            "Associated Press": 3,
-            "BBC News": 3,
-            "Al Jazeera": 3,
-        },
 
         # Outlet name normalisation map
         "outlet_name_map": {
@@ -248,39 +202,5 @@ COUNTRY_CONFIGS = {
             "transnet", "bbbee", "nersa", "economy", "inflation", "revenue",
             "tax", "strike"
         },
-
-        # Bias labels (for display)
-        "bias_labels": {
-            1: "Far-Left / Populist Left",
-            2: "Center-Left / Social Justice",
-            3: "Center / Institutionalist",
-            4: "Center-Right / Pro-Business",
-            5: "Right / Conservative",
-        },
-        
-        # Bias label descriptions (for LLM prompts)
-        "bias_descriptions": {
-            1: "Focuses on Radical Economic Transformation (RET), state intervention, land expropriation, and anti-monopoly capital narratives",
-            2: "Highlights systemic inequalities, the Gini coefficient, labor rights, and the impact of poverty on youth unemployment and healthcare",
-            3: "Champions the Constitution, accountability journalism, and anti-corruption. Blends a belief in free markets with support for social safety nets",
-            4: "Prioritizes economic growth, free-market solutions, and corporate interests. Highly critical of state inefficiencies, high taxes, and labor union strikes",
-            5: "Emphasizes traditionalism, cultural preservation, ethno-nationalism, or strict libertarianism. Often focuses on agricultural security or specific community interests",
-        },
-        
-        # Bias display modes per topic
-        "bias_modes": {
-            "SA Politics": "political",
-            "SA News": "political",
-            "International News": "none",
-            "Business": "political",
-            "Technology": "none",
-            "AI": "none",
-            "Gaming": "none",
-            "Science": "none",
-            "Medicine": "none",
-            "Sports": "none",
-            "Other": "none",
-        },
-        "default_bias_mode": "none",
     },
 }
