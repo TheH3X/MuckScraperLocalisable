@@ -1,10 +1,9 @@
-import os
-import requests
 import logging
 from datetime import datetime, timedelta, date as date_cls
 from flask import Blueprint, render_template, request, redirect, url_for, jsonify, abort
+from sqlalchemy.orm import joinedload
 from aggregator.search import healthcheck as meili_healthcheck
-from aggregator.models import Article, Story, Topic, RawArticlePayload, Edition, EditionStory
+from aggregator.models import Article, Story, Topic, Edition, EditionStory
 from aggregator.story_view import apply_aggregator_filter
 from aggregator.outlet_prefs import count_unrated_in_outlets
 from flask_login import current_user
@@ -24,14 +23,21 @@ def index():
 
 @public.route("/feed-headlines")
 def aggregator_headlines():
-    from aggregator.models import Story, Article
-    from datetime import datetime, timedelta
     cutoff = datetime.utcnow() - timedelta(days=1)
     stories = Story.query.join(Article).group_by(Story.id).filter(
         Story.created_at >= cutoff,
         Story.headline_score > 0
     ).order_by(Story.headline_score.desc()).limit(20).all()
-    
+
+    if stories:
+        # Eager-load articles/outlets in one query to avoid an N+1 lazy-load
+        # per story below (separate query, since the one above already has
+        # its own join+group_by for filtering).
+        story_ids = [story.id for story in stories]
+        Story.query.filter(Story.id.in_(story_ids)).options(
+            joinedload(Story.articles).joinedload(Article.outlet)
+        ).all()
+
     for story in stories:
         apply_aggregator_filter(story)
         

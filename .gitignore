@@ -4,6 +4,7 @@ meili_data/
 .pytest_cache/
 __pycache__/
 *.pyc
+*.log
 destroy.sh
 GEMINI.md
 printouts

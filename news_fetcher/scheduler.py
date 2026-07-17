@@ -5,7 +5,7 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from aggregator import create_app, db
 from aggregator.models import AppSetting
-from news_fetcher.fetch_and_store_articles import fetch_and_store_articles, process_current_edition, review_ambiguous_grouping_matches, publish_edition, clear_stale_single_article_headlines
+from news_fetcher.fetch_and_store_articles import fetch_and_store_articles, process_current_edition, review_ambiguous_grouping_matches, publish_edition, clear_stale_single_article_headlines, merge_count_maps
 from news_fetcher.rss_fetcher import fetch_and_store_rss
 from news_fetcher.headline_generator import generate_missing_headlines
 from datetime import datetime, timedelta, timezone
@@ -148,11 +148,6 @@ def append_scrape_outcome_history(run_metrics, headline_site_metrics, max_runs=S
     history = history[-max_runs:]
     _save_json_setting(SCRAPE_OUTCOME_HISTORY_KEY, history)
     return history
-
-
-def _merge_counts(target, source):
-    for key, value in (source or {}).items():
-        target[key] = target.get(key, 0) + value
 
 
 def build_headline_site_metrics():
@@ -497,7 +492,8 @@ def run_all_fetches(run_full_pipeline=True):
         )
     steps_remaining = [f"Fetching: {f.display_label}" for f in SCHEDULED_FETCHES]
     steps_remaining.append("Fetching RSS feeds")
-    
+    steps_remaining.append("Generating missing headlines")
+
     if run_full_pipeline:
         steps_remaining.extend([
             "Headline ranking",
@@ -565,8 +561,8 @@ def run_all_fetches(run_full_pipeline=True):
                     run_metrics["totals"]["new_outlets"] += provider_metrics.get("new_outlets", 0)
                     run_metrics["totals"]["stories_touched"] += provider_metrics.get("stories_touched", 0)
                     touched_story_ids.update(provider_metrics.get("story_ids", []))
-                    _merge_counts(run_metrics["totals"]["skipped"], provider_metrics.get("skipped"))
-                    _merge_counts(run_metrics["totals"]["scrape_statuses"], provider_metrics.get("scrape_statuses"))
+                    merge_count_maps(run_metrics["totals"]["skipped"], provider_metrics.get("skipped"))
+                    merge_count_maps(run_metrics["totals"]["scrape_statuses"], provider_metrics.get("scrape_statuses"))
             except Exception as e:
                 db.session.rollback()
                 logging.error(f"Error fetching {fetch.display_label}: {e}")
@@ -594,8 +590,8 @@ def run_all_fetches(run_full_pipeline=True):
             run_metrics["totals"]["new_outlets"] += rss_metrics.get("new_outlets", 0)
             run_metrics["totals"]["stories_touched"] += rss_metrics.get("stories_touched", 0)
             touched_story_ids.update(rss_metrics.get("story_ids", []))
-            _merge_counts(run_metrics["totals"]["skipped"], rss_metrics.get("skipped"))
-            _merge_counts(run_metrics["totals"]["scrape_statuses"], rss_metrics.get("scrape_statuses"))
+            merge_count_maps(run_metrics["totals"]["skipped"], rss_metrics.get("skipped"))
+            merge_count_maps(run_metrics["totals"]["scrape_statuses"], rss_metrics.get("scrape_statuses"))
         except Exception as e:
             db.session.rollback()
             logging.error(f"Error fetching RSS feeds: {e}")
