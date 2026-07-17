@@ -392,8 +392,6 @@ def _resolve_story_topic_names(story, topic_name, title, content, is_new_story):
 
 
 def _tag_story_topics(story, topic_names, topic_name=None):
-    from aggregator.models import Topic as TopicModel
-
     names = []
     seen = set()
     if topic_name and topic_name != "Custom":
@@ -404,11 +402,7 @@ def _tag_story_topics(story, topic_names, topic_name=None):
             seen.add(name)
 
     for name in names:
-        topic = TopicModel.query.filter_by(name=name).first()
-        if not topic:
-            topic = TopicModel(name=name)
-            db.session.add(topic)
-            db.session.flush()
+        topic = get_or_create_topic(name)
         append_topic_if_missing(story, topic)
 
 
@@ -1520,7 +1514,6 @@ def force_regroup_all():
     # Step 4: Re-group articles one by one and re-attach topics
     from news_fetcher.story_grouper import clean_story_title
     from news_fetcher.topic_classifier import classify_article
-    from aggregator.models import Topic as TopicModel
 
     new_stories = []
     try:
@@ -1547,12 +1540,8 @@ def force_regroup_all():
             # Re-attach topic tags
             topic_names = classify_article(article.title, article.content or "")
             for topic_name in topic_names:
-                topic = TopicModel.query.filter_by(name=topic_name).first()
-                if not topic:
-                    topic = TopicModel(name=topic_name)
-                    db.session.add(topic)
-                    db.session.flush()
-                
+                topic = get_or_create_topic(topic_name)
+
                 # Since we cleared article.topics = [] above, this is safe
                 append_topic_if_missing(article, topic)
                 append_topic_if_missing(story, topic)
@@ -1585,7 +1574,6 @@ def reclassify_all_articles(batch_size=50):
     Clears existing topic tags and reassigns based on content.
     """
     from news_fetcher.topic_classifier import classify_article
-    from aggregator.models import Topic as TopicModel
 
     if not check_ollama_status():
         logger.info("Ollama offline, skipping reclassification.")
@@ -1609,12 +1597,8 @@ def reclassify_all_articles(batch_size=50):
         topic_names = classify_article(article.title, article.content or "")
 
         for topic_name in topic_names:
-            topic = TopicModel.query.filter_by(name=topic_name).first()
-            if not topic:
-                topic = TopicModel(name=topic_name)
-                db.session.add(topic)
-                db.session.flush()
-            
+            topic = get_or_create_topic(topic_name)
+
             append_topic_if_missing(article, topic)
 
             if article.story:

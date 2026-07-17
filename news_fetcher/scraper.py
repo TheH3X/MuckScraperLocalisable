@@ -730,55 +730,57 @@ def extract_article_html_playwright(url):
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.set_extra_http_headers(HEADERS_DEFAULT)
+            try:
+                page = browser.new_page()
+                page.set_extra_http_headers(HEADERS_DEFAULT)
 
-            page.goto(url, timeout=15000, wait_until="domcontentloaded")
-            time.sleep(2)
+                page.goto(url, timeout=15000, wait_until="domcontentloaded")
+                time.sleep(2)
 
-            page.evaluate("""
-                ['script','style','nav','header','footer','aside',
-                 'iframe','button','form']
-                .forEach(tag => document.querySelectorAll(tag)
-                .forEach(el => el.remove()))
-            """)
+                page.evaluate("""
+                    ['script','style','nav','header','footer','aside',
+                     'iframe','button','form']
+                    .forEach(tag => document.querySelectorAll(tag)
+                    .forEach(el => el.remove()))
+                """)
 
-            html = page.content()
-            browser.close()
+                html = page.content()
 
-            # Try readability on the rendered HTML first
-            content = extract_with_readability(html, url)
-            if content:
-                return content
+                # Try readability on the rendered HTML first
+                content = extract_with_readability(html, url)
+                if content:
+                    return content
 
-            # Fall back to manual extraction
-            content_html = page.evaluate("""
-                () => {
-                    const article = document.querySelector('article');
-                    if (article) return article.innerHTML;
+                # Fall back to manual extraction while the page is still open
+                content_html = page.evaluate("""
+                    () => {
+                        const article = document.querySelector('article');
+                        if (article) return article.innerHTML;
 
-                    const selectors = [
-                        '.article-body', '.article-content', '.story-body',
-                        '.post-content', '.entry-content',
-                        '[itemprop="articleBody"]'
-                    ];
-                    for (const sel of selectors) {
-                        const el = document.querySelector(sel);
-                        if (el && el.innerText.length > 200) return el.innerHTML;
+                        const selectors = [
+                            '.article-body', '.article-content', '.story-body',
+                            '.post-content', '.entry-content',
+                            '[itemprop="articleBody"]'
+                        ];
+                        for (const sel of selectors) {
+                            const el = document.querySelector(sel);
+                            if (el && el.innerText.length > 200) return el.innerHTML;
+                        }
+
+                        const paras = Array.from(document.querySelectorAll('p'));
+                        return '<div>' + paras.map(p => p.outerHTML).join('') + '</div>';
                     }
+                """)
 
-                    const paras = Array.from(document.querySelectorAll('p'));
-                    return '<div>' + paras.map(p => p.outerHTML).join('') + '</div>';
-                }
-            """) if False else None  # page already closed, use html from above
+                if content_html and len(content_html) > 200:
+                    sanitized = sanitize_html(content_html)
+                    logger.info(f"  [Playwright] Scraped {len(sanitized)} chars from {url[:60]}")
+                    return sanitized
 
-            if content_html and len(content_html) > 200:
-                sanitized = sanitize_html(content_html)
-                logger.info(f"  [Playwright] Scraped {len(sanitized)} chars from {url[:60]}")
-                return sanitized
-
-            logger.info(f"  [Playwright] Could not extract content from {url[:60]}")
-            return None
+                logger.info(f"  [Playwright] Could not extract content from {url[:60]}")
+                return None
+            finally:
+                browser.close()
 
     except ImportError:
         logger.info("  [Playwright] Not installed, skipping.")

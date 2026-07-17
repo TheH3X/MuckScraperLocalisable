@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from urllib.parse import urlparse
 from flask import Blueprint, current_app, render_template, request, redirect, url_for, jsonify, flash
 from sqlalchemy import case, func, or_
+from sqlalchemy.orm import joinedload
 from aggregator import db
 from aggregator.authz import admin_required
 from aggregator.models import AppSetting, Article, Outlet, Story, Topic, RawArticlePayload, User
@@ -250,7 +251,7 @@ def article_domain(url):
 
 def redirect_to_articles(label=None, scrape_status=None):
     next_url = request.form.get("next", "").strip()
-    if next_url.startswith("/"):
+    if next_url.startswith("/") and urlparse(next_url).netloc == "":
         return redirect(next_url)
     params = {}
     if label:
@@ -385,6 +386,16 @@ def list_articles(per_page=25, force_multi=False):
 
     stories = pagination.items if pagination else []
     total_pages = pagination.pages if pagination else 0
+
+    if stories:
+        # Eager-load articles/outlets for this page's stories in one query,
+        # avoiding an N+1 lazy-load per story in the loop below. Queried
+        # separately (rather than joinedload on the paginated query itself)
+        # because that query already has its own join+group_by for filtering.
+        story_ids = [story.id for story in stories]
+        Story.query.filter(Story.id.in_(story_ids)).options(
+            joinedload(Story.articles).joinedload(Article.outlet)
+        ).all()
 
     for story in stories:
         apply_aggregator_filter(story)
@@ -1062,11 +1073,11 @@ def topic_new():
     return render_template("admin_topic_form.html", topic=None)
 
 
-def _read_topic_form_data(fallback_name):
+def _read_topic_form_data(fallback_name, fallback_display_order=99):
     try:
-        display_order = int(request.form.get("display_order", 99))
+        display_order = int(request.form.get("display_order", fallback_display_order))
     except (ValueError, TypeError):
-        display_order = 99
+        display_order = fallback_display_order
 
     return {
         "label": request.form.get("label", "").strip() or fallback_name,
@@ -1132,15 +1143,7 @@ def topic_update(topic_id):
         else:
             topic.name = new_name
 
-    topic_data = _read_topic_form_data(topic.name)
-    
-    # Restore the original display_order if the form was invalid (instead of defaulting to 99)
-    if "display_order" not in request.form:
-        topic_data["display_order"] = topic.display_order
-        try:
-            topic_data["display_order"] = int(request.form.get("display_order", topic.display_order))
-        except (ValueError, TypeError):
-            pass
+    topic_data = _read_topic_form_data(topic.name, fallback_display_order=topic.display_order)
 
     for key, value in topic_data.items():
         setattr(topic, key, value)

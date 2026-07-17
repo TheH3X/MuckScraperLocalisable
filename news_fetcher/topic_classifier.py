@@ -73,31 +73,6 @@ def get_topic_hints():
     return hints
 
 
-def _match_topics_from_line(line, valid_topics):
-    """Match a classifier output line to known topic names."""
-    line = line.strip()
-    if not line:
-        return []
-
-    matched = []
-    parts = [line] + [p.strip() for p in re.split(r"[,;/]", line) if p.strip()]
-
-    for part in parts:
-        part_lower = part.lower()
-        for valid in valid_topics:
-            if valid in matched:
-                continue
-            valid_lower = valid.lower()
-            if part_lower == valid_lower:
-                matched.append(valid)
-            elif len(valid) <= 3 and re.search(
-                r"\b" + re.escape(valid) + r"\b", part, re.IGNORECASE
-            ):
-                matched.append(valid)
-
-    return matched
-
-
 @observe()
 def classify_article(title, content_snippet=""):
     """

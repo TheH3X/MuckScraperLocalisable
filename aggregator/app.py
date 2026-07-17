@@ -1,7 +1,6 @@
 # muckscraperHeadlinesGoogleNEW/aggregator/app.py
 import logging
 from aggregator import create_app, db
-from flask_migrate import Migrate
 
 # Filter out HAProxy health checks from logs
 class HealthCheckFilter(logging.Filter):
