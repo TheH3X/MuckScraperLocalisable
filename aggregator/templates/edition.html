@@ -105,7 +105,7 @@
 
                     <div class="outlet-tags">
                         {% for outlet in story.unique_outlets[:6] %}
-                            {{ outlet_tag(outlet) }}
+                            {{ outlet_tag(outlet, compact=true) }}
                         {% endfor %}
                     </div>
 

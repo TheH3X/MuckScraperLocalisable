@@ -103,15 +103,19 @@
 {% endmacro %}
 
 
-{% macro outlet_tag(outlet, show_actions=none) %}
+{% macro outlet_tag(outlet, show_actions=none, compact=false) %}
 {% if outlet %}
 {% set status = outlet_status(outlet) %}
 {% if show_actions is none %}
     {% set show_actions = current_user.is_authenticated %}
 {% endif %}
-<span class="bias-tag-group outlet-tag-group">
+<span class="bias-tag-group outlet-tag-group{{ ' compact' if compact else '' }}">
     <span class="outlet-name-box">{{ outlet.name }}</span>
+    {% if compact %}
+    <span class="pref-dot pref-{{ status }}" title="{{ status|capitalize }} — your rating for this source"></span>
+    {% else %}
     <span class="pref-badge pref-{{ status }}" title="Your rating for this source">{{ status|capitalize }}</span>
+    {% endif %}
     {% if show_actions %}
     <span class="outlet-pref-actions">
         {% if status != 'allow' %}

@@ -21,7 +21,7 @@
             <span class="local-date" data-utc="{{ article.date.isoformat() }}Z">{{ article.date.strftime('%b %d, %Y %H:%M') }}</span>
         </div>
         <div class="outlet-tags" style="margin-bottom: 16px;">
-            {{ outlet_tag(article.outlet) }}
+            {{ outlet_tag(article.outlet, compact=true) }}
         </div>
         <h1><a href="{{ article.url }}" target="_blank" rel="noopener">{{ article.title }}</a></h1>
     </div>

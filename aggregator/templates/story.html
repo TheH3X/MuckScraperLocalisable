@@ -95,7 +95,7 @@
             {% endif %}
         </h3>
         <div class="outlet-tags">
-            {{ outlet_tag(article.outlet) }}
+            {{ outlet_tag(article.outlet, compact=true) }}
             {% if article.accessibility_reason %}
             <span class="reader-meta" style="margin-left: 0.5rem;">Could not read full text (paywall or block)</span>
             {% endif %}
