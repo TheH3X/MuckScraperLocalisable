@@ -2,11 +2,12 @@ import os
 import sys
 import time
 
+from sqlalchemy import inspect
 from sqlalchemy.exc import OperationalError
-from flask_migrate import stamp
+from flask_migrate import stamp, upgrade
 
 from aggregator import db
-from aggregator.app import app, init_db
+from aggregator.app import app
 from aggregator.models import User
 
 
@@ -17,28 +18,51 @@ def required_env(name):
     return value
 
 
+def _wait_for_database():
+    last_error = None
+    for attempt in range(1, 31):
+        try:
+            with app.app_context():
+                db.session.execute(db.text("SELECT 1"))
+            return
+        except OperationalError as exc:
+            last_error = exc
+            print(f"Database not ready yet, retrying ({attempt}/30)...")
+            time.sleep(2)
+    raise RuntimeError(f"Database did not become ready: {last_error}")
+
+
+def _init_schema():
+    """Build or update the schema, keeping Alembic's version table honest.
+
+    A genuinely empty database gets its schema built from the current models
+    and is stamped as current — there's nothing for Alembic to apply. An
+    existing database is never touched with db.create_all(): that only
+    creates tables it doesn't already recognize and silently skips ALTER
+    TABLE changes on tables that already exist, which would desync it from
+    a bare `stamp`. Its pending migrations are applied for real instead.
+    """
+    with app.app_context():
+        db.session.execute(db.text("CREATE EXTENSION IF NOT EXISTS vector"))
+        db.session.commit()
+
+        is_fresh_database = not inspect(db.engine).get_table_names()
+        if is_fresh_database:
+            db.create_all()
+            stamp(revision="head")
+        else:
+            upgrade()
+
+
 def bootstrap_admin():
     username = required_env("ADMIN_USERNAME")
     email = required_env("ADMIN_EMAIL")
     password = required_env("ADMIN_PASSWORD")
 
-    last_error = None
-    for attempt in range(1, 31):
-        try:
-            init_db()
-            break
-        except OperationalError as exc:
-            last_error = exc
-            print(f"Database not ready yet, retrying ({attempt}/30)...")
-            time.sleep(2)
-    else:
-        raise RuntimeError(f"Database did not become ready: {last_error}")
+    _wait_for_database()
+    _init_schema()
 
     with app.app_context():
-        # Fresh installs created with db.create_all() need Alembic marked current
-        # so later `flask db upgrade` runs only future migrations.
-        stamp(revision="head")
-
         user = User.query.filter_by(username=username).first()
         email_owner = User.query.filter_by(email=email).first()
 

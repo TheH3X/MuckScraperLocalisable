@@ -3,12 +3,12 @@
 <html data-theme="light">
 <head>
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    {% from 'newspaper_macros.html' import newspaper_head %}
+    {% from 'newspaper_macros.html' import newspaper_head with context %}
     {{ newspaper_head(edition.edition_type|capitalize ~ ' Edition — ' ~ edition.date.strftime('%B %d, %Y') ~ ' — MuckScraper News') }}
 </head>
 <body>
 
-{% from 'newspaper_macros.html' import archive_drawer, top_nav, masthead, outlet_tag, theme_script %}
+{% from 'newspaper_macros.html' import archive_drawer, top_nav, masthead, outlet_tag, theme_script with context %}
 {{ archive_drawer(recent_editions, edition.id) }}
 
 <div class="container">

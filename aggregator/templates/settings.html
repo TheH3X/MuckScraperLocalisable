@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html data-theme="light">
 <head>
-    {% from 'newspaper_macros.html' import newspaper_head, theme_script %}
+    {% from 'newspaper_macros.html' import newspaper_head, theme_script with context %}
     {{ newspaper_head('Your Sources — MuckScraper') }}
     <style>
         .settings-wrap { max-width: 820px; margin: 40px auto; padding: 0 20px 60px; }
@@ -29,7 +29,7 @@
     </style>
 </head>
 <body>
-{% from 'newspaper_macros.html' import outlet_tag, top_nav, masthead %}
+{% from 'newspaper_macros.html' import outlet_tag, top_nav, masthead with context %}
 {{ top_nav() }}
 {{ masthead(subtitle='Your Sources') }}
 

@@ -2,12 +2,12 @@
 <!DOCTYPE html>
 <html data-theme="light">
 <head>
-    {% from 'newspaper_macros.html' import newspaper_head %}
+    {% from 'newspaper_macros.html' import newspaper_head with context %}
     {{ newspaper_head('Full Archive — MuckScraper News') }}
 </head>
 <body>
 
-{% from 'newspaper_macros.html' import archive_drawer, top_nav, masthead, theme_script %}
+{% from 'newspaper_macros.html' import archive_drawer, top_nav, masthead, theme_script with context %}
 {{ archive_drawer(recent_editions) }}
 
 <div class="container">
